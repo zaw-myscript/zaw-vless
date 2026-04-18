@@ -1,12 +1,19 @@
 #!/bin/bash
-# ZAW VLESS CLI MENU (Pro Design)
+# ZAW VLESS CLI MENU (Pro Design - Stable Fix)
+set +e # Error ကြောင့် အပြင်သို့ လွင့်ထွက်ခြင်းကို တားဆီးရန်
 
 B="\e[1;34m"; G="\e[1;32m"; Y="\e[1;33m"; R="\e[1;31m"; C="\e[1;36m"; M="\e[1;35m"; Z="\e[0m"
 CFG="/usr/local/etc/xray/config.json"
 DB="/usr/local/etc/xray/users.txt"
 IP=$(curl -s ipv4.icanhazip.com)
+if [[ -z "$IP" ]]; then IP=$(curl -s ifconfig.me); fi
 
-# === UI ဒီဇိုင်းပိုင်း ===
+# === Enter ခေါက်မှ ပြန်ထွက်မည့်စနစ် ===
+pause() {
+    echo -e "\n${C} ─────────────────────────────────────────────────${Z}"
+    read -p " ↩️  Menu သို့ပြန်သွားရန် Enter ခေါက်ပါ..."
+}
+
 header() {
     clear
     echo -e "${C}╔═════════════════════════════════════════════════╗${Z}"
@@ -17,7 +24,6 @@ footer() {
     echo -e "${C}╚═════════════════════════════════════════════════╝${Z}"
 }
 
-# === နံပါတ်စဉ်ဖြင့် အကောင့်ပြသရန် ===
 show_numbered_list() {
     if [ ! -s "$DB" ]; then
         echo -e "${R} ⚠️ အကောင့်တစ်ခုမှ မရှိသေးပါ။${Z}"
@@ -42,16 +48,24 @@ add_user() {
     header
     echo -e "${G} ➕ အကောင့်သစ်ဖန်တီးခြင်း ${Z}\n"
     read -p " ➔ အကောင့်အမည် ထည့်ပါ: " user
-    if [[ -z "$user" ]]; then echo -e "${R}အမည်မပါပါ။${Z}"; sleep 2; return; fi
-    if grep -q "^$user " $DB 2>/dev/null; then echo -e "${R}ဤအမည်ဖြင့် အကောင့်ရှိပြီးသားပါ။${Z}"; sleep 2; return; fi
+    user=$(echo "$user" | tr -d '\r\n ')
+    if [[ -z "$user" ]]; then echo -e "${R} ⚠️ အမည်မပါပါ။${Z}"; pause; return; fi
+    if grep -q "^$user " $DB 2>/dev/null; then echo -e "${R} ⚠️ ဤအမည်ဖြင့် အကောင့်ရှိပြီးသားပါ။${Z}"; pause; return; fi
     
     read -p " ➔ သက်တမ်း (ရက်အရေအတွက်) ထည့်ပါ: " days
-    if ! [[ "$days" =~ ^[0-9]+$ ]]; then echo -e "${R}ဂဏန်းသာထည့်ပါ။${Z}"; sleep 2; return; fi
+    days=$(echo "$days" | tr -d '\r\n ')
+    if ! [[ "$days" =~ ^[0-9]+$ ]]; then echo -e "${R} ⚠️ ဂဏန်းသာထည့်ပါ။${Z}"; pause; return; fi
     
-    exp=$(date -d "+$days days" +"%Y-%m-%d")
-    uuid=$(uuidgen)
+    exp=$(date -d "+$days days" +"%Y-%m-%d" 2>/dev/null)
+    uuid=$(cat /proc/sys/kernel/random/uuid) # ပိုမိုမြန်ဆန်၍ Error ကင်းသောစနစ်
     
-    jq ".inbounds[0].settings.clients += [{\"id\": \"$uuid\", \"email\": \"$user\"}]" $CFG > tmp.json && mv tmp.json $CFG
+    # JSON အတွင်းသို့ ဘေးကင်းစွာ ရေးသွင်းခြင်း
+    jq ".inbounds[0].settings.clients += [{\"id\": \"$uuid\", \"email\": \"$user\"}]" $CFG > tmp.json 2>/dev/null
+    if [[ $? -ne 0 ]]; then
+        echo -e "${R} ⚠️ System Error ဖြစ်နေပါသည်။${Z}"
+        pause; return
+    fi
+    mv tmp.json $CFG
     echo "$user $uuid $exp" >> $DB
     systemctl restart xray
     
@@ -62,71 +76,72 @@ add_user() {
     echo -e "${Y} 👤 အမည်     :${Z} $user"
     echo -e "${Y} ⏳ သက်တမ်း :${Z} $exp ($days ရက်)"
     echo -e "\n${C} 👇 Customer အား ပေးရန် Link 👇${Z}"
-    echo -e "${M}${link}${Z}\n"
-    footer
-    read -p " Menu သို့ပြန်သွားရန် Enter ခေါက်ပါ..."
+    echo -e "${M}${link}${Z}"
+    pause
 }
 
-# === (၂) နံပါတ်စဉ်ဖြင့် အကောင့်ဖျက်ခြင်း ===
+# === (၂) အကောင့်ဖျက်ခြင်း ===
 del_user() {
     header
     echo -e "${R} ❌ အကောင့်ဖျက်ရန် ${Z}\n"
-    show_numbered_list || { sleep 2; return; }
+    show_numbered_list || { pause; return; }
     
-    echo ""
+    echo -e "\n${C} (မဖျက်လိုပါက Enter အလွတ်ခေါက်ပါ)${Z}"
     read -p " ➔ ဖျက်လိုသော အကောင့် [နံပါတ်] ကို ရွေးပါ: " num
-    if ! [[ "$num" =~ ^[0-9]+$ ]]; then echo -e "${R}နံပါတ်မှားနေပါသည်။${Z}"; sleep 2; return; fi
+    num=$(echo "$num" | tr -d '\r\n ')
+    if [[ -z "$num" ]]; then pause; return; fi # Enter အလွတ်ခေါက်ပါက ပြန်ထွက်မည်
+    if ! [[ "$num" =~ ^[0-9]+$ ]]; then echo -e "${R} ⚠️ နံပါတ်မှားနေပါသည်။${Z}"; pause; return; fi
     
     user=$(sed -n "${num}p" $DB | awk '{print $1}')
-    if [[ -z "$user" ]]; then echo -e "${R}အကောင့်ရှာမတွေ့ပါ။${Z}"; sleep 2; return; fi
+    if [[ -z "$user" ]]; then echo -e "${R} ⚠️ အကောင့်ရှာမတွေ့ပါ။${Z}"; pause; return; fi
     
     jq "del(.inbounds[0].settings.clients[] | select(.email == \"$user\"))" $CFG > tmp.json && mv tmp.json $CFG
     sed -i "/^$user /d" $DB
     systemctl restart xray
     
     echo -e "\n${G} ✅ အကောင့် ($user) အား ဖျက်ပစ်လိုက်ပါပြီ။${Z}"
-    sleep 2
+    pause
 }
 
-# === (၃) နံပါတ်စဉ်ဖြင့် သက်တမ်းတိုးခြင်း / ရက်စွဲအတိအကျပြင်ခြင်း ===
+# === (၃) သက်တမ်းတိုးခြင်း ===
 renew_user() {
     header
     echo -e "${G} 🔄 သက်တမ်းတိုးရန် / ပြင်ရန် ${Z}\n"
-    show_numbered_list || { sleep 2; return; }
+    show_numbered_list || { pause; return; }
     
-    echo ""
+    echo -e "\n${C} (မလုပ်လိုပါက Enter အလွတ်ခေါက်ပါ)${Z}"
     read -p " ➔ သက်တမ်းတိုးမည့် အကောင့် [နံပါတ်] ကို ရွေးပါ: " num
-    if ! [[ "$num" =~ ^[0-9]+$ ]]; then echo -e "${R}နံပါတ်မှားနေပါသည်။${Z}"; sleep 2; return; fi
+    num=$(echo "$num" | tr -d '\r\n ')
+    if [[ -z "$num" ]]; then pause; return; fi # Enter အလွတ်ခေါက်ပါက ပြန်ထွက်မည်
+    if ! [[ "$num" =~ ^[0-9]+$ ]]; then echo -e "${R} ⚠️ နံပါတ်မှားနေပါသည်။${Z}"; pause; return; fi
     
     user=$(sed -n "${num}p" $DB | awk '{print $1}')
-    if [[ -z "$user" ]]; then echo -e "${R}အကောင့်ရှာမတွေ့ပါ။${Z}"; sleep 2; return; fi
+    if [[ -z "$user" ]]; then echo -e "${R} ⚠️ အကောင့်ရှာမတွေ့ပါ။${Z}"; pause; return; fi
     
     echo -e "\n${C}(ဥပမာ: 30 ဟုရိုက်လျှင် ရက် ၃၀ တိုးမည်။ 18-5-2026 ဟုရိုက်လျှင် ထိုရက်စွဲသို့ တိကျစွာ ပြောင်းမည်)${Z}"
     read -p " ➔ ရက်အရေအတွက် (သို့) ရက်စွဲအတိအကျ ထည့်ပါ: " input
+    input=$(echo "$input" | tr -d '\r\n ')
+    if [[ -z "$input" ]]; then pause; return; fi
     
     old_exp=$(grep "^$user " $DB | awk '{print $3}')
     uuid=$(grep "^$user " $DB | awk '{print $2}')
     
-    # ရက်စွဲအတိအကျ (18-5-2026) ကို (2026-05-18) ပုံစံသို့ ပြောင်းလဲခြင်း
     if [[ "$input" =~ ^([0-9]{1,2})[-/]([0-9]{1,2})[-/]([0-9]{4})$ ]]; then
         input="${BASH_REMATCH[3]}-${BASH_REMATCH[2]}-${BASH_REMATCH[1]}"
     fi
     
     if [[ "$input" =~ ^[0-9]+$ ]]; then
-        # ဂဏန်းသာရိုက်ပါက (ရက်ပေါင်းထပ်တိုးခြင်း)
         if [[ $(date -d "$old_exp" +%s) < $(date +%s) ]]; then
             new_exp=$(date -d "+$input days" +"%Y-%m-%d")
         else
             new_exp=$(date -d "$old_exp +$input days" +"%Y-%m-%d")
         fi
     else
-        # ရက်စွဲအတိအကျရိုက်ပါက (ထိုရက်စွဲသို့ ပြောင်းလဲခြင်း)
         if date -d "$input" >/dev/null 2>&1; then
             new_exp=$(date -d "$input" +"%Y-%m-%d")
         else
-            echo -e "${R}ရက်စွဲ ပုံစံမှားနေပါသည်! (ဥပမာ: 18-5-2026 ဟု ရိုက်ပါ)${Z}"
-            sleep 3
-            return
+            echo -e "${R} ⚠️ ရက်စွဲ ပုံစံမှားနေပါသည်! (ဥပမာ: 18-5-2026 ဟု ရိုက်ပါ)${Z}"
+            pause; return
         fi
     fi
     
@@ -135,10 +150,10 @@ renew_user() {
     
     echo -e "\n${G} ✅ အကောင့် ($user) အား သက်တမ်းတိုးပြီးပါပြီ။${Z}"
     echo -e "${Y} 📅 ကုန်ဆုံးမည့်ရက်အသစ် : $new_exp${Z}"
-    sleep 3
+    pause
 }
 
-# === (၄) အကောင့်စာရင်းအပြည့်အစုံ ကြည့်ရန် ===
+# === (၄) အကောင့်စာရင်း ===
 list_users() {
     header
     echo -e "${C} 📋 VLESS အကောင့်စာရင်းများ ${Z}"
@@ -163,10 +178,9 @@ list_users() {
     fi
     echo -e " ─────────────────────────────────────────────────"
     footer
-    read -p " Menu သို့ပြန်သွားရန် Enter ခေါက်ပါ..."
+    pause
 }
 
-# === Main Menu Loop ===
 while true; do
     header
     echo -e "  ${G}[1]${Z} ➕ အကောင့်သစ်ဖန်တီးရန်"
@@ -176,12 +190,13 @@ while true; do
     echo -e "  ${M}[0]${Z} 🚪 ထွက်မည်"
     footer
     read -p " ➔ ရွေးချယ်ရန် (0-4): " opt
+    opt=$(echo "$opt" | tr -d '\r\n ')
     case $opt in
         1) add_user ;;
         2) del_user ;;
         3) renew_user ;;
         4) list_users ;;
         0) clear; break ;;
-        *) echo -e "${R}မှားယွင်းနေပါသည်။${Z}"; sleep 1 ;;
+        *) echo -e "${R} ⚠️ မှားယွင်းနေပါသည်။${Z}"; sleep 1 ;;
     esac
 done
