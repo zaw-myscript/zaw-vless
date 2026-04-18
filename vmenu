@@ -1,5 +1,5 @@
 #!/bin/bash
-# ZAW VLESS CLI MENU (EXACT REAL-TIME ONLINE STATUS)
+# ZAW VLESS CLI MENU (REAL-TIME ONLINE FIX - PERMISSION SOLVED)
 
 trap ' ' INT
 set +e
@@ -7,16 +7,26 @@ set +e
 B="\e[1;34m"; G="\e[1;32m"; Y="\e[1;33m"; R="\e[1;31m"; C="\e[1;36m"; M="\e[1;35m"; Z="\e[0m"
 CFG="/usr/local/etc/xray/config.json"
 DB="/usr/local/etc/xray/users.txt"
-LOG_FILE="/usr/local/etc/xray/access.log"
+
+# Log ဖိုင်နေရာ အမှန်နှင့် Permission (ဒီနေရာလေးက အရင်က Error ဖြစ်နေတာပါ)
+LOG_DIR="/var/log/xray"
+LOG_FILE="$LOG_DIR/access.log"
 
 IP=$(curl -s --max-time 5 ipv4.icanhazip.com || curl -s --max-time 5 ifconfig.me || echo "Your-IP")
 
-# Log စနစ် ဖွင့်ပေးခြင်း
-if [ -f "$CFG" ] && ! grep -q "\"access\":" "$CFG"; then
-    jq --arg log "$LOG_FILE" '.log.access = $log' "$CFG" > tmp.json 2>/dev/null && mv tmp.json "$CFG"
-    touch "$LOG_FILE" && chmod 644 "$LOG_FILE"
-    systemctl restart xray
-    sleep 1
+# Log စနစ် ဖွင့်ပေးခြင်းနှင့် Permission အမှန်ပေးခြင်း
+mkdir -p "$LOG_DIR"
+touch "$LOG_FILE"
+chown -R nobody:nogroup "$LOG_DIR" 2>/dev/null || chown -R nobody:nobody "$LOG_DIR" 2>/dev/null
+chmod 644 "$LOG_FILE"
+
+# Config ထဲမှာ Log နေရာ အမှန်ပြန်ပြင်ပေးခြင်း
+if [ -f "$CFG" ]; then
+    if ! grep -q "\"access\":" "$CFG" || grep -q "/usr/local/etc/xray/access.log" "$CFG"; then
+        jq --arg log "$LOG_FILE" '.log.access = $log' "$CFG" > tmp.json 2>/dev/null && mv tmp.json "$CFG"
+        systemctl restart xray
+        sleep 1
+    fi
 fi
 
 pause() {
@@ -159,7 +169,7 @@ list_users() {
     pause
 }
 
-# (၅) 🌐 Online / Offline သီးသန့် ဇယားကွက် (အမှန်ကန်ဆုံးနည်းလမ်း)
+# (၅) 🌐 Online / Offline သီးသန့် ဇယားကွက် (Permission ပြဿနာဖြေရှင်းပြီး)
 online_status() {
     header
     echo -e "${G}   🌐 အကောင့်များ၏ Online / Offline ဇယား ${Z}\n"
@@ -169,18 +179,19 @@ online_status() {
     echo -e "${C} ║ ${Y}စဉ်${C} ║ ${Y}အကောင့်အမည်${C}      ║ ${Y}လက်ရှိအခြေအနေ${C}   ║${Z}"
     echo -e "${C} ╠════╬═════════════════╬═════════════════╣${Z}"
 
-    # လက်ရှိအချိန်နှင့် လွန်ခဲ့သော ၂ မိနစ်အတွင်း အချိန်များကို ဆွဲထုတ်ခြင်း
+    # လက်ရှိအချိန်နှင့် လွန်ခဲ့သော ၃ မိနစ်အတွင်း အချိန်များကို ဆွဲထုတ်ခြင်း
     t0=$(date +"%Y/%m/%d %H:%M")
     t1=$(date -d "1 minute ago" +"%Y/%m/%d %H:%M")
     t2=$(date -d "2 minutes ago" +"%Y/%m/%d %H:%M")
+    t3=$(date -d "3 minutes ago" +"%Y/%m/%d %H:%M")
 
-    # ၎င်းအချိန်များအတွင်း လိုင်းအသုံးပြုထားသော နာမည်များကိုသာ အတိအကျ စစ်ထုတ်ခြင်း
-    active_users=$(grep -E "$t0|$t1|$t2" "$LOG_FILE" 2>/dev/null | grep "accepted" | awk '{print $NF}' | tr -d '][]' | sort | uniq)
+    # အဲ့ဒီအချိန်အတွင်း လိုင်းသုံးနေသူတွေကို ရှာဖွေခြင်း
+    active_lines=$(grep -E "$t0|$t1|$t2|$t3" "$LOG_FILE" 2>/dev/null | grep "accepted")
 
     local i=1
     while read -r user uuid exp; do
         printf "${C} ║${Z} %-2s ${C}║${Z} %-15s ${C}║${Z}" "$i" "$user"
-        if echo "$active_users" | grep -qw "$user"; then
+        if echo "$active_lines" | grep -qw "$user"; then
             echo -e "${G} 🟢 Online      ${C}║${Z}"
         else
             echo -e "${R} 🔴 Offline     ${C}║${Z}"
@@ -190,7 +201,7 @@ online_status() {
     
     echo -e "${C} ╚════╩═════════════════╩═════════════════╝${Z}"
     
-    # မှတ်တမ်းအဟောင်း ရှင်းထုတ်ခြင်း (ဖျက်မပစ်ဘဲ နောက်ဆုံး စာကြောင်း ၅၀၀၀ ကိုသာ ချန်ထားမည်)
+    # ဖိုင်အရမ်းမကြီးသွားအောင် နောက်ဆုံး စာကြောင်း ၅၀၀၀ ကိုသာ ချန်ထားမည်
     tail -n 5000 "$LOG_FILE" > "$LOG_FILE.tmp" 2>/dev/null && mv "$LOG_FILE.tmp" "$LOG_FILE" 2>/dev/null || true
     pause
 }
