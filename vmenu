@@ -1,5 +1,5 @@
 #!/bin/bash
-# ZAW VLESS CLI MENU (DEDICATED ONLINE TABLE)
+# ZAW VLESS CLI MENU (EXACT REAL-TIME ONLINE STATUS)
 
 trap ' ' INT
 set +e
@@ -159,21 +159,24 @@ list_users() {
     pause
 }
 
-# (၅) 🌐 Online / Offline သီးသန့် ဇယားကွက် 
+# (၅) 🌐 Online / Offline သီးသန့် ဇယားကွက် (အမှန်ကန်ဆုံးနည်းလမ်း)
 online_status() {
     header
     echo -e "${G}   🌐 အကောင့်များ၏ Online / Offline ဇယား ${Z}\n"
     if [ ! -s "$DB" ]; then echo -e "${R} ⚠️ အကောင့်မရှိသေးပါ။${Z}"; pause; return; fi
 
-    # ဇယားခေါင်းစဉ်
     echo -e "${C} ╔════╦═════════════════╦═════════════════╗${Z}"
     echo -e "${C} ║ ${Y}စဉ်${C} ║ ${Y}အကောင့်အမည်${C}      ║ ${Y}လက်ရှိအခြေအနေ${C}   ║${Z}"
     echo -e "${C} ╠════╬═════════════════╬═════════════════╣${Z}"
 
-    # Log ထဲမှ Online လူများရှာခြင်း
-    active_users=$(tail -n 1000 "$LOG_FILE" 2>/dev/null | grep "accepted" | awk '{print $NF}' | sort | uniq)
+    # လက်ရှိအချိန်နှင့် လွန်ခဲ့သော ၂ မိနစ်အတွင်း အချိန်များကို ဆွဲထုတ်ခြင်း
+    t0=$(date +"%Y/%m/%d %H:%M")
+    t1=$(date -d "1 minute ago" +"%Y/%m/%d %H:%M")
+    t2=$(date -d "2 minutes ago" +"%Y/%m/%d %H:%M")
 
-    # ဇယားကွက်အတွင်း ထည့်သွင်းခြင်း
+    # ၎င်းအချိန်များအတွင်း လိုင်းအသုံးပြုထားသော နာမည်များကိုသာ အတိအကျ စစ်ထုတ်ခြင်း
+    active_users=$(grep -E "$t0|$t1|$t2" "$LOG_FILE" 2>/dev/null | grep "accepted" | awk '{print $NF}' | tr -d '][]' | sort | uniq)
+
     local i=1
     while read -r user uuid exp; do
         printf "${C} ║${Z} %-2s ${C}║${Z} %-15s ${C}║${Z}" "$i" "$user"
@@ -185,11 +188,10 @@ online_status() {
         i=$((i+1))
     done < "$DB"
     
-    # ဇယားပိတ်ခြင်း
     echo -e "${C} ╚════╩═════════════════╩═════════════════╝${Z}"
     
-    # မှတ်တမ်းအဟောင်း ရှင်းထုတ်ခြင်း (နောက်တစ်ခါကြည့်ရန်)
-    truncate -s 0 "$LOG_FILE" 2>/dev/null || > "$LOG_FILE"
+    # မှတ်တမ်းအဟောင်း ရှင်းထုတ်ခြင်း (ဖျက်မပစ်ဘဲ နောက်ဆုံး စာကြောင်း ၅၀၀၀ ကိုသာ ချန်ထားမည်)
+    tail -n 5000 "$LOG_FILE" > "$LOG_FILE.tmp" 2>/dev/null && mv "$LOG_FILE.tmp" "$LOG_FILE" 2>/dev/null || true
     pause
 }
 
