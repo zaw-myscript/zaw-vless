@@ -1,5 +1,5 @@
 #!/bin/bash
-# ZAW VLESS CLI MENU (PREMIUM NEON EDITION)
+# ZAW VLESS CLI MENU (PREMIUM NEON EDITION + FULL TABLES)
 
 trap ' ' INT
 set +e
@@ -12,13 +12,12 @@ LOG_FILE="$LOG_DIR/access.log"
 
 IP=$(curl -s --max-time 5 ipv4.icanhazip.com || curl -s --max-time 5 ifconfig.me || echo "Your-IP")
 
-# Log စနစ် ဖွင့်ပေးခြင်းနှင့် Permission အမှန်ပေးခြင်း
+# Log စနစ် ဖွင့်ပေးခြင်း
 mkdir -p "$LOG_DIR"
 touch "$LOG_FILE"
 chown -R nobody:nogroup "$LOG_DIR" 2>/dev/null || chown -R nobody:nobody "$LOG_DIR" 2>/dev/null
 chmod 644 "$LOG_FILE"
 
-# Config ထဲမှာ Log နေရာ အမှန်ပြန်ပြင်ပေးခြင်း
 if [ -f "$CFG" ]; then
     if ! grep -q "\"access\":" "$CFG" || grep -q "/usr/local/etc/xray/access.log" "$CFG"; then
         jq --arg log "$LOG_FILE" '.log.access = $log' "$CFG" > tmp.json 2>/dev/null && mv tmp.json "$CFG"
@@ -49,6 +48,30 @@ header() {
 
 footer() {
     echo -e "${M} ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ${Z}"
+}
+
+# === 📊 အကောင့်ဇယားကွက်ပြသသည့် စနစ် (သက်တမ်းလွန် အရောင်ခွဲခြားမှုပါဝင်သည်) ===
+show_account_table() {
+    if [ ! -s "$DB" ]; then echo -e "${R}  ⚠️ အကောင့်မရှိသေးပါ။${Z}"; return 1; fi
+    echo -e "  ${C}╔════╦══════════════════╦══════════════════╦═════════════╗${Z}"
+    echo -e "  ${C}║ ${Y}စဉ်${C} ║ ${Y}အကောင့်အမည်${C}       ║ ${Y}ကုန်ဆုံးရက်${C}        ║ ${Y}အခြေအနေ${C}    ║${Z}"
+    echo -e "  ${C}╠════╬══════════════════╬══════════════════╬═════════════╣${Z}"
+
+    today=$(date +%s)
+    local i=1
+    while read -r user uuid exp; do
+        exp_sec=$(date -d "$exp" +%s 2>/dev/null)
+        if [[ $exp_sec -lt $today ]]; then
+            # သက်တမ်းလွန်နေပါက အနီရောင် + ⚠️ သင်္ကေတ ပြမည်
+            printf "  ${C}║${Z} ${R}%-2s${Z} ${C}║${Z} ${R}%-16s${Z} ${C}║${Z} ${R}%-16s${Z} ${C}║${Z} ${Y}⚠️ Expired ${C}║\n" "$i" "$user" "$exp"
+        else
+            # ပုံမှန်ဆိုပါက အစိမ်းရောင်ဖြင့် ပြမည်
+            printf "  ${C}║${Z} %-2s ${C}║${Z} %-16s ${C}║${Z} %-16s ${C}║${Z} ${G}✅ Active  ${C}║\n" "$i" "$user" "$exp"
+        fi
+        i=$((i+1))
+    done < "$DB"
+    echo -e "  ${C}╚════╩══════════════════╩══════════════════╩═════════════╝${Z}"
+    return 0
 }
 
 # (၁) အကောင့်သစ်ဖွင့်ခြင်း
@@ -91,9 +114,8 @@ add_user() {
 del_user() {
     header
     echo -e "${R}  [-] အကောင့်ဖျက်ရန် ${Z}\n"
-    if [ ! -s "$DB" ]; then echo -e "${R}  ⚠️ အကောင့်မရှိသေးပါ။${Z}"; pause; return; fi
+    show_account_table || { pause; return; }
     
-    awk '{print "   ["NR"] " $1 " (" $3 ")"}' "$DB"
     echo ""
     read -r -p "  ➔ ဖျက်လိုသော အကောင့်နံပါတ်ကို ရွေးပါ: " num
     num=$(echo "$num" | sed 's/[^0-9]//g')
@@ -116,9 +138,8 @@ del_user() {
 renew_user() {
     header
     echo -e "${Y}  [*] သက်တမ်းတိုးခြင်း / ရက်စွဲပြင်ခြင်း ${Z}\n"
-    if [ ! -s "$DB" ]; then echo -e "${R}  ⚠️ အကောင့်မရှိသေးပါ။${Z}"; pause; return; fi
+    show_account_table || { pause; return; }
     
-    awk '{print "   ["NR"] " $1 " (" $3 ")"}' "$DB"
     echo ""
     read -r -p "  ➔ နံပါတ်ကို ရွေးပါ: " num
     num=$(echo "$num" | sed 's/[^0-9]//g')
@@ -154,22 +175,8 @@ renew_user() {
 # (၄) စာရင်းကြည့်ခြင်း
 list_users() {
     header
-    echo -e "  ${C}📋 VLESS အကောင့်စာရင်းများ ${Z}"
-    echo -e "  ─────────────────────────────────────────────────────────────"
-    printf "   %-5s %-15s %-18s %-10s\n" "စဉ်" "အမည်" "ကုန်ဆုံးရက်" "အခြေအနေ"
-    echo -e "  ─────────────────────────────────────────────────────────────"
-    today=$(date +%s)
-    if [ -s "$DB" ]; then
-        i=1
-        while read -r user uuid exp; do
-            exp_sec=$(date -d "$exp" +%s 2>/dev/null)
-            status="${G}ပုံမှန်${Z}"; [[ $exp_sec -lt $today ]] && status="${R}သက်တမ်းလွန်${Z}"
-            printf "   %-5s %-15s %-18s %-10b\n" "[$i]" "$user" "$exp" "$status"
-            i=$((i+1))
-        done < "$DB"
-    else
-        echo -e "${R}   အကောင့်မရှိသေးပါ။${Z}"
-    fi
+    echo -e "  ${C}📋 VLESS အကောင့်စာရင်းများ ${Z}\n"
+    show_account_table
     footer
     pause
 }
