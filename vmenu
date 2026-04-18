@@ -1,0 +1,105 @@
+#!/bin/bash
+# ZAW VLESS CLI MENU (Standalone)
+
+B="\e[1;34m"; G="\e[1;32m"; Y="\e[1;33m"; R="\e[1;31m"; C="\e[1;36m"; Z="\e[0m"
+CFG="/usr/local/etc/xray/config.json"
+DB="/usr/local/etc/xray/users.txt"
+IP=$(curl -s ipv4.icanhazip.com)
+
+add_user() {
+    read -p "➔ အကောင့်အမည် ထည့်ပါ: " user
+    if grep -q "^$user " $DB 2>/dev/null; then echo -e "${R}ဤအမည်ဖြင့် အကောင့်ရှိပြီးသားပါ။${Z}"; sleep 2; return; fi
+    read -p "➔ သက်တမ်း (ရက်) ထည့်ပါ: " days
+    exp=$(date -d "+$days days" +"%Y-%m-%d")
+    uuid=$(uuidgen)
+    
+    jq ".inbounds[0].settings.clients += [{\"id\": \"$uuid\", \"email\": \"$user\"}]" $CFG > tmp.json && mv tmp.json $CFG
+    echo "$user $uuid $exp" >> $DB
+    systemctl restart xray
+    
+    link="vless://${uuid}@${IP}:80?type=ws&security=none&path=%2Fzawvless#${user}"
+    
+    echo -e "\n${G}✅ အကောင့်အောင်မြင်စွာ ဖွင့်ပြီးပါပြီ!${Z}"
+    echo -e "======================================"
+    echo -e "အမည်     : $user"
+    echo -e "သက်တမ်း : $exp ($days ရက်)"
+    echo -e "======================================"
+    echo -e "${C}👇 Customer အား ပေးရန် Link 👇${Z}"
+    echo -e "${Y}${link}${Z}\n"
+    read -p "Menu သို့ပြန်သွားရန် Enter ခေါက်ပါ..."
+}
+
+del_user() {
+    read -p "➔ ဖျက်လိုသော အကောင့်အမည် ထည့်ပါ: " user
+    if ! grep -q "^$user " $DB 2>/dev/null; then echo -e "${R}အကောင့်ရှာမတွေ့ပါ။${Z}"; sleep 2; return; fi
+    
+    jq "del(.inbounds[0].settings.clients[] | select(.email == \"$user\"))" $CFG > tmp.json && mv tmp.json $CFG
+    sed -i "/^$user /d" $DB
+    systemctl restart xray
+    
+    echo -e "${G}✅ အကောင့် ($user) အား အောင်မြင်စွာ ဖျက်ပစ်လိုက်ပါပြီ။${Z}"
+    sleep 2
+}
+
+renew_user() {
+    read -p "➔ သက်တမ်းတိုးမည့် အကောင့်အမည် ထည့်ပါ: " user
+    if ! grep -q "^$user " $DB 2>/dev/null; then echo -e "${R}အကောင့်ရှာမတွေ့ပါ။${Z}"; sleep 2; return; fi
+    read -p "➔ ထပ်တိုးမည့် (ရက်) ထည့်ပါ: " days
+    
+    old_exp=$(grep "^$user " $DB | awk '{print $3}')
+    uuid=$(grep "^$user " $DB | awk '{print $2}')
+    if [[ $(date -d "$old_exp" +%s) < $(date +%s) ]]; then
+        new_exp=$(date -d "+$days days" +"%Y-%m-%d")
+    else
+        new_exp=$(date -d "$old_exp +$days days" +"%Y-%m-%d")
+    fi
+    
+    sed -i "/^$user /d" $DB
+    echo "$user $uuid $new_exp" >> $DB
+    
+    echo -e "${G}✅ အကောင့် ($user) အား သက်တမ်းတိုးပြီးပါပြီ။${Z}"
+    echo -e "ကုန်ဆုံးမည့်ရက်အသစ် : $new_exp"
+    sleep 2
+}
+
+list_users() {
+    echo -e "\n${C}=== VLESS အကောင့်စာရင်း ===${Z}"
+    printf "%-15s %-15s %-10s\n" "အမည်" "ကုန်ဆုံးမည့်ရက်" "အခြေအနေ"
+    echo "----------------------------------------------"
+    today=$(date +%s)
+    if [ -f "$DB" ]; then
+        while read -r user uuid exp; do
+            exp_sec=$(date -d "$exp" +%s 2>/dev/null)
+            if [[ $exp_sec -lt $today ]]; then
+                status="${R}သက်တမ်းလွန်${Z}"
+            else
+                status="${G}ပုံမှန်${Z}"
+            fi
+            printf "%-15s %-15s %-10b\n" "$user" "$exp" "$status"
+        done < $DB
+    fi
+    echo "----------------------------------------------"
+    read -p "Menu သို့ပြန်သွားရန် Enter ခေါက်ပါ..."
+}
+
+while true; do
+    clear
+    echo -e "${B}========================================${Z}"
+    echo -e "${G}      VLESS (WebSocket) CLI MENU        ${Z}"
+    echo -e "${B}========================================${Z}"
+    echo -e "  [1] ➕ အကောင့်သစ်ဖွင့်ရန်"
+    echo -e "  [2] ❌ အကောင့်ဖျက်ရန်"
+    echo -e "  [3] 🔄 သက်တမ်းတိုးရန်"
+    echo -e "  [4] 📋 အကောင့်စာရင်းစစ်ရန်"
+    echo -e "  [0] 🚪 ထွက်မည်"
+    echo -e "${B}========================================${Z}"
+    read -p "➔ ရွေးချယ်ရန် (0-4): " opt
+    case $opt in
+        1) add_user ;;
+        2) del_user ;;
+        3) renew_user ;;
+        4) list_users ;;
+        0) break ;;
+        *) echo -e "${R}မှားယွင်းနေပါသည်။${Z}"; sleep 1 ;;
+    esac
+done
