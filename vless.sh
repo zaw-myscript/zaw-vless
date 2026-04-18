@@ -49,9 +49,9 @@ cat > $CFG <<EOF
 }
 EOF
 
-# GitHub မှ vmenu ဖိုင်ကို ဆွဲယူခြင်း
+# GitHub မှ vmenu ဖိုင်ကို ဆွဲယူခြင်း (Repo အသစ် zaw-vless သို့ ပြောင်းထားပါသည်)
 echo -e "${Y}📋 VLESS CLI Menu ထည့်သွင်းနေပါသည်...${Z}"
-wget -qO /usr/bin/vmenu "https://raw.githubusercontent.com/zaw-myscript/-my-zivpn/main/vmenu"
+wget -qO /usr/bin/vmenu "https://raw.githubusercontent.com/zaw-myscript/zaw-vless/main/vmenu"
 chmod +x /usr/bin/vmenu
 
 systemctl daemon-reload
