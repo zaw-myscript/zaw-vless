@@ -1,5 +1,5 @@
 #!/bin/bash
-# ZAW VLESS CLI MENU (PREMIUM NEON EDITION + 3 COLORS STATUS)
+# ZAW VLESS CLI MENU (PREMIUM + AUTO-BAN SYSTEM)
 
 trap ' ' INT
 set +e
@@ -9,14 +9,16 @@ CFG="/usr/local/etc/xray/config.json"
 DB="/usr/local/etc/xray/users.txt"
 LOG_DIR="/var/log/xray"
 LOG_FILE="$LOG_DIR/access.log"
+BAN_LOG="$LOG_DIR/limit_jail.log"
 
 IP=$(curl -s --max-time 5 ipv4.icanhazip.com || curl -s --max-time 5 ifconfig.me || echo "Your-IP")
 
-# Log စနစ် ဖွင့်ပေးခြင်း
+# === 1. Log စနစ် ဖွင့်ပေးခြင်း ===
 mkdir -p "$LOG_DIR"
 touch "$LOG_FILE"
+touch "$BAN_LOG"
 chown -R nobody:nogroup "$LOG_DIR" 2>/dev/null || chown -R nobody:nobody "$LOG_DIR" 2>/dev/null
-chmod 644 "$LOG_FILE"
+chmod 644 "$LOG_FILE" "$BAN_LOG"
 
 if [ -f "$CFG" ]; then
     if ! grep -q "\"access\":" "$CFG" || grep -q "/usr/local/etc/xray/access.log" "$CFG"; then
@@ -24,6 +26,58 @@ if [ -f "$CFG" ]; then
         systemctl restart xray
         sleep 1
     fi
+fi
+
+# === 2. Auto-Ban စနစ်ကို Update/Install လုပ်ခြင်း ===
+if [ ! -f "/usr/bin/vlimit" ] || grep -q "kicked" "/usr/bin/vlimit"; then
+    echo -e "${Y}  [*] ⚙️ Anti-Share (Auto-Ban) စနစ် အသစ်ကို Update လုပ်နေပါသည်...${Z}"
+    cat > /usr/bin/vlimit << 'EOF'
+#!/bin/bash
+CFG="/usr/local/etc/xray/config.json"
+DB="/usr/local/etc/xray/users.txt"
+LOG="/var/log/xray/access.log"
+BAN_LOG="/var/log/xray/limit_jail.log"
+
+while true; do
+    t0=$(date +"%Y/%m/%d %H:%M")
+    log_data=$(grep "$t0" "$LOG" 2>/dev/null | grep "accepted")
+    
+    while read -r user uuid exp limit; do
+        limit_val=${limit:-1}
+        ip_count=$(echo "$log_data" | grep "email: $user" | awk '{print $3}' | cut -d: -f1 | sort | uniq | wc -l)
+        
+        if [ "$ip_count" -gt "$limit_val" ]; then
+            # ❌ ခိုးသုံးသူကို JSON နှင့် Database ထဲမှ အပြီးဖျက်ပစ်ခြင်း
+            jq --arg em "$user" 'del(.inbounds[0].settings.clients[] | select(.email == $em))' "$CFG" > tmp.json && mv tmp.json "$CFG"
+            sed -i "/^$user /d" "$DB"
+            
+            # Xray ကို (၁) ခါတည်း Restart ချ၍ အတည်ပြုခြင်း
+            systemctl restart xray
+            
+            # မှတ်တမ်းတင်ခြင်း
+            echo "$(date +"%Y-%m-%d %H:%M:%S") - ❌ BANNED: $user (IPs: $ip_count / Limit: $limit_val)" >> "$BAN_LOG"
+            sleep 5
+        fi
+    done < "$DB"
+    sleep 30
+done
+EOF
+    chmod +x /usr/bin/vlimit
+    cat > /etc/systemd/system/vlimit.service << 'EOF'
+[Unit]
+Description=ZAW VLESS IP Limit Auto-Ban
+After=network.target
+[Service]
+ExecStart=/usr/bin/vlimit
+Restart=always
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable --now vlimit
+    systemctl restart vlimit
+    echo -e "${G}  ✅ Auto-Ban စနစ် အောင်မြင်စွာ အသက်ဝင်သွားပါပြီ!${Z}"
+    sleep 2
 fi
 
 pause() {
@@ -50,33 +104,31 @@ footer() {
     echo -e "${M} ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ${Z}"
 }
 
-# === 📊 အကောင့်ဇယားကွက်ပြသသည့် စနစ် (အရောင် ၃ မျိုး ခွဲခြားမှု) ===
+# === 📊 အကောင့်ဇယားကွက်ပြသသည့် စနစ် ===
 show_account_table() {
     if [ ! -s "$DB" ]; then echo -e "${R}  ⚠️ အကောင့်မရှိသေးပါ။${Z}"; return 1; fi
-    echo -e "  ${C}╔════╦══════════════════╦══════════════════╦═════════════╗${Z}"
-    echo -e "  ${C}║ ${Y}စဉ်${C} ║ ${Y}အကောင့်အမည်${C}       ║ ${Y}ကုန်ဆုံးရက်${C}        ║ ${Y}အခြေအနေ${C}    ║${Z}"
-    echo -e "  ${C}╠════╬══════════════════╬══════════════════╬═════════════╣${Z}"
+    echo -e "  ${C}╔════╦══════════════╦══════════════╦════════════╦═══════╗${Z}"
+    echo -e "  ${C}║ ${Y}စဉ်${C} ║ ${Y}အမည်${C}         ║ ${Y}ကုန်ဆုံးရက်${C}    ║ ${Y}အခြေအနေ${C}    ║ ${Y}Limit${C} ║${Z}"
+    echo -e "  ${C}╠════╬══════════════╬══════════════╬════════════╬═══════╣${Z}"
 
     today_date=$(date +"%Y-%m-%d")
     today_sec=$(date -d "$today_date" +%s)
     
     local i=1
-    while read -r user uuid exp; do
+    while read -r user uuid exp limit; do
+        limit_val=${limit:-1}
         exp_sec=$(date -d "$exp" +%s 2>/dev/null)
         
         if [[ "$exp" == "$today_date" ]]; then
-            # ဒီနေ့ သက်တမ်းကုန်မည့် အကောင့် (အဝါရောင်)
-            printf "  ${C}║${Z} ${Y}%-2s${Z} ${C}║${Z} ${Y}%-16s${Z} ${C}║${Z} ${Y}%-16s${Z} ${C}║${Z} ${Y}⚠️ Today   ${C}║\n" "$i" "$user" "$exp"
+            printf "  ${C}║${Z} ${Y}%-2s${Z} ${C}║${Z} ${Y}%-12s${Z} ${C}║${Z} ${Y}%-12s${Z} ${C}║${Z} ${Y}⚠️ Today  ${C}║${Z} ${Y}%-5s${Z} ${C}║\n" "$i" "$user" "$exp" "$limit_val"
         elif [[ $exp_sec -lt $today_sec ]]; then
-            # သက်တမ်းလွန်သွားသော အကောင့် (အနီရောင်)
-            printf "  ${C}║${Z} ${R}%-2s${Z} ${C}║${Z} ${R}%-16s${Z} ${C}║${Z} ${R}%-16s${Z} ${C}║${Z} ${R}❌ Expired ${C}║\n" "$i" "$user" "$exp"
+            printf "  ${C}║${Z} ${R}%-2s${Z} ${C}║${Z} ${R}%-12s${Z} ${C}║${Z} ${R}%-12s${Z} ${C}║${Z} ${R}❌ Expired${C}║${Z} ${R}%-5s${Z} ${C}║\n" "$i" "$user" "$exp" "$limit_val"
         else
-            # ပုံမှန်အကောင့် (အစိမ်းရောင်)
-            printf "  ${C}║${Z} %-2s ${C}║${Z} %-16s ${C}║${Z} %-16s ${C}║${Z} ${G}✅ Active  ${C}║\n" "$i" "$user" "$exp"
+            printf "  ${C}║${Z} %-2s ${C}║${Z} %-12s ${C}║${Z} %-12s ${C}║${Z} ${G}✅ Active ${C}║${Z} %-5s ${C}║\n" "$i" "$user" "$exp" "$limit_val"
         fi
         i=$((i+1))
     done < "$DB"
-    echo -e "  ${C}╚════╩══════════════════╩══════════════════╩═════════════╝${Z}"
+    echo -e "  ${C}╚════╩══════════════╩══════════════╩════════════╩═══════╝${Z}"
     return 0
 }
 
@@ -94,19 +146,23 @@ add_user() {
     days=$(echo "$days" | sed 's/[^0-9]//g')
     if [[ -z "$days" ]]; then echo -e "${R}  ⚠️ ရက်အရေအတွက်မှားယွင်းနေပါသည်။${Z}"; pause; return; fi
     
+    read -r -p "  ➔ IP Limit (ဖုန်းဘယ်နှစ်လုံး သုံးခွင့်ပေးမလဲ): " limit
+    limit=$(echo "$limit" | sed 's/[^0-9]//g')
+    [[ -z "$limit" ]] && limit=1
+    
     exp=$(date -d "+$days days" +"%Y-%m-%d" 2>/dev/null)
     uuid=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen)
     
     if jq --arg id "$uuid" --arg em "$user" '.inbounds[0].settings.clients += [{"id": $id, "email": $em}]' "$CFG" > tmp.json 2>/dev/null; then
         mv tmp.json "$CFG"
-        echo "$user $uuid $exp" >> "$DB"
+        echo "$user $uuid $exp $limit" >> "$DB"
         systemctl restart xray
         
         link="vless://${uuid}@${IP}:80?type=ws&security=none&path=%2Fzawvless#${user}"
         
         header
         echo -e "${G}  ✅ အကောင့်အောင်မြင်စွာ ဖွင့်ပြီးပါပြီ! ${Z}\n"
-        echo -e "  ${Y}👤 အမည်     :${Z} $user"
+        echo -e "  ${Y}👤 အမည်     :${Z} $user   ${C}│${Z}  ${Y}📱 ဖုန်းအလုံးရေ :${Z} $limit"
         echo -e "  ${Y}⏳ သက်တမ်း :${Z} $exp ($days ရက်)"
         echo -e "\n  ${C}👇 Customer အား ပေးရန် Link 👇${Z}"
         echo -e "  ${M}${link}${Z}"
@@ -159,6 +215,8 @@ renew_user() {
             
             old_exp=$(grep "^$user " "$DB" | awk '{print $3}')
             uuid=$(grep "^$user " "$DB" | awk '{print $2}')
+            limit=$(grep "^$user " "$DB" | awk '{print $4}')
+            limit_val=${limit:-1}
             
             if [[ "$input" =~ ^[0-9]{1,2}-[0-9]{1,2}-[0-9]{4}$ ]]; then
                 new_exp=$(date -d "$(echo "$input" | awk -F- '{print $3"-"$2"-"$1}')" +"%Y-%m-%d" 2>/dev/null)
@@ -168,7 +226,7 @@ renew_user() {
             
             if [[ -n "$new_exp" ]]; then
                 sed -i "${num}d" "$DB"
-                echo "$user $uuid $new_exp" >> "$DB"
+                echo "$user $uuid $new_exp $limit_val" >> "$DB"
                 echo -e "\n  ${G}✅ ရက်စွဲအသစ် : $new_exp${Z}"
             else
                 echo -e "${R}  ⚠️ ပုံစံမှားနေပါသည်။${Z}"
@@ -187,36 +245,53 @@ list_users() {
     pause
 }
 
-# (၅) 🌐 Online / Offline သီးသန့် ဇယားကွက် (Real-Time)
+# (၅) 🌐 Online Status
 online_status() {
     header
-    echo -e "  ${G}🌐 အကောင့်များ၏ Online / Offline ဇယား ${Z}\n"
+    echo -e "  ${G}🌐 အကောင့်များ၏ Online & IP သုံးစွဲမှု ဇယား ${Z}\n"
     if [ ! -s "$DB" ]; then echo -e "${R}  ⚠️ အကောင့်မရှိသေးပါ။${Z}"; pause; return; fi
 
-    echo -e "  ${C}╔════╦══════════════════╦══════════════════╗${Z}"
-    echo -e "  ${C}║ ${Y}စဉ်${C} ║ ${Y}အကောင့်အမည်${C}       ║ ${Y}လက်ရှိအခြေအနေ${C}    ║${Z}"
-    echo -e "  ${C}╠════╬══════════════════╬══════════════════╣${Z}"
+    echo -e "  ${C}╔════╦══════════════╦═════════════════╦════════════╗${Z}"
+    echo -e "  ${C}║ ${Y}စဉ်${C} ║ ${Y}အမည်${C}         ║ ${Y}လက်ရှိအခြေအနေ${C}    ║ ${Y}IP သုံးစွဲမှု${C}  ║${Z}"
+    echo -e "  ${C}╠════╬══════════════╬═════════════════╬════════════╣${Z}"
 
     t0=$(date +"%Y/%m/%d %H:%M")
     t1=$(date -d "1 minute ago" +"%Y/%m/%d %H:%M")
-    t2=$(date -d "2 minutes ago" +"%Y/%m/%d %H:%M")
 
-    active_lines=$(grep -E "$t0|$t1|$t2" "$LOG_FILE" 2>/dev/null | grep "accepted")
+    active_lines=$(grep -E "$t0|$t1" "$LOG_FILE" 2>/dev/null | grep "accepted")
 
     local i=1
-    while read -r user uuid exp; do
-        printf "  ${C}║${Z} %-2s ${C}║${Z} %-16s ${C}║${Z}" "$i" "$user"
-        if echo "$active_lines" | grep -qw "$user"; then
-            echo -e "${G} 🟢 Online       ${C}║${Z}"
+    while read -r user uuid exp limit; do
+        limit_val=${limit:-1}
+        ip_count=$(echo "$active_lines" | grep "email: $user" | awk '{print $3}' | cut -d: -f1 | sort | uniq | wc -l)
+        
+        printf "  ${C}║${Z} %-2s ${C}║${Z} %-12s ${C}║${Z}" "$i" "$user"
+        
+        if [ "$ip_count" -gt 0 ]; then
+            if [ "$ip_count" -gt "$limit_val" ]; then
+                echo -e "${R} ⚠️ Overlimit    ${C}║${Z}  ${R}$ip_count / $limit_val${Z} IP  ${C}║${Z}"
+            else
+                echo -e "${G} 🟢 Online       ${C}║${Z}  ${G}$ip_count / $limit_val${Z} IP  ${C}║${Z}"
+            fi
         else
-            echo -e "${R} 🔴 Offline      ${C}║${Z}"
+            echo -e "${Z} 🔴 Offline      ${C}║${Z}  ${Z}0 / $limit_val${Z} IP  ${C}║${Z}"
         fi
         i=$((i+1))
     done < "$DB"
     
-    echo -e "  ${C}╚════╩══════════════════╩══════════════════╝${Z}"
-    
-    tail -n 3000 "$LOG_FILE" > "$LOG_FILE.tmp" 2>/dev/null && mv "$LOG_FILE.tmp" "$LOG_FILE" 2>/dev/null || true
+    echo -e "  ${C}╚════╩══════════════╩═════════════════╩════════════╝${Z}"
+    pause
+}
+
+# (၆) 🚫 Ban စာရင်းကြည့်ရန်
+view_ban_log() {
+    header
+    echo -e "  ${R}🚫 ခိုးသုံး၍ အလိုအလျောက် ပိတ်ပင်ခံရသော မှတ်တမ်းများ ${Z}\n"
+    if [ -s "$BAN_LOG" ]; then
+        echo -e "  ${Y}$(tail -n 20 "$BAN_LOG")${Z}"
+    else
+        echo -e "  ${G}✅ လတ်တလော ခိုးသုံးသူ မရှိသေးပါ။${Z}"
+    fi
     pause
 }
 
@@ -227,16 +302,18 @@ while true; do
     echo -e "   ${R}[2]${Z} ❌ အကောင့်ဖျက်ရန်"
     echo -e "   ${Y}[3]${Z} 🔄 သက်တမ်းတိုးရန် / ပြင်ရန်"
     echo -e "   ${C}[4]${Z} 📋 အကောင့်စာရင်းစစ်ရန်"
-    echo -e "   ${M}[5]${Z} 🌐 Online/Offline ဇယားကြည့်ရန်"
+    echo -e "   ${M}[5]${Z} 🌐 Online & IP Limit စစ်ဆေးရန်"
+    echo -e "   ${R}[6]${Z} 🚫 Auto-Ban မှတ်တမ်းကြည့်ရန်"
     echo -e "   ${B}[0]${Z} 🚪 ထွက်မည်"
     footer
-    read -r -p "  ➔ ရွေးချယ်ရန် (0-5): " opt
+    read -r -p "  ➔ ရွေးချယ်ရန် (0-6): " opt
     case "$opt" in
         1) add_user ;;
         2) del_user ;;
         3) renew_user ;;
         4) list_users ;;
         5) online_status ;;
+        6) view_ban_log ;;
         0) clear; exit 0 ;;
         *) echo -e "${R}  ⚠️ မှားယွင်းနေပါသည်။${Z}"; sleep 1 ;;
     esac
