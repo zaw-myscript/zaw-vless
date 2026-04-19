@@ -1,5 +1,5 @@
 #!/bin/bash
-# ZAW VLESS CLI MENU (PREMIUM + AUTO-BAN SYSTEM)
+# ZAW VLESS CLI MENU (PREMIUM HEADER + AUTO-BAN SYSTEM)
 
 trap ' ' INT
 set +e
@@ -11,7 +11,7 @@ LOG_DIR="/var/log/xray"
 LOG_FILE="$LOG_DIR/access.log"
 BAN_LOG="$LOG_DIR/limit_jail.log"
 
-IP=$(curl -s --max-time 5 ipv4.icanhazip.com || curl -s --max-time 5 ifconfig.me || echo "Your-IP")
+IP=$(cat /etc/IP 2>/dev/null || wget -qO- ipv4.icanhazip.com 2>/dev/null)
 
 # === 1. Log စနစ် ဖွင့်ပေးခြင်း ===
 mkdir -p "$LOG_DIR"
@@ -51,10 +51,7 @@ while true; do
             jq --arg em "$user" 'del(.inbounds[0].settings.clients[] | select(.email == $em))' "$CFG" > tmp.json && mv tmp.json "$CFG"
             sed -i "/^$user /d" "$DB"
             
-            # Xray ကို (၁) ခါတည်း Restart ချ၍ အတည်ပြုခြင်း
             systemctl restart xray
-            
-            # မှတ်တမ်းတင်ခြင်း
             echo "$(date +"%Y-%m-%d %H:%M:%S") - ❌ BANNED: $user (IPs: $ip_count / Limit: $limit_val)" >> "$BAN_LOG"
             sleep 5
         fi
@@ -81,27 +78,67 @@ EOF
 fi
 
 pause() {
-    echo -e "\n${C} ────────────────────────────────────────────────────────${Z}"
+    echo -e "\n\033[1;36m ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo -e "${Y} ↩️  ရှေ့ဆက်ရန် Enter ခေါက်ပါ...${Z}"
     read -r
 }
 
-# === 🎨 ZAW-SCRIPT EXCLUSIVE HEADER ===
-header() {
-    clear
-    echo -e "${C} ███████╗ █████╗ ██╗    ██╗    ███████╗ ██████╗██████╗ ██╗██████╗ ████████╗ ${Z}"
-    echo -e "${C} ╚══███╔╝██╔══██╗██║    ██║    ██╔════╝██╔════╝██╔══██╗██║██╔══██╗╚══██╔══╝ ${Z}"
-    echo -e "${C}   ███╔╝ ███████║██║ █╗ ██║    ███████╗██║     ██████╔╝██║██████╔╝   ██║    ${Z}"
-    echo -e "${C}  ███╔╝  ██╔══██║██║███╗██║    ╚════██║██║     ██╔══██╗██║██╔═══╝    ██║    ${Z}"
-    echo -e "${C} ███████╗██║  ██║╚███╔███╔╝    ███████║╚██████╗██║  ██║██║██║        ██║    ${Z}"
-    echo -e "${C} ╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝     ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝╚═╝        ╚═╝    ${Z}"
-    echo -e "${M} ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ${Z}"
-    echo -e "   ${G}SERVER IP:${Z} ${Y}$IP${Z}  ${M}│${Z}  ${G}SYSTEM:${Z} ${Y}VLESS-WS${Z}  ${M}│${Z}  ${G}PORT:${Z} ${Y}80${Z}"
-    echo -e "${M} ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ${Z}"
-}
+# System Information Fetching (For Header)
+if [[ "$(grep -c "Ubuntu" /etc/issue.net)" = "1" ]]; then
+    system=$(cut -d' ' -f1 /etc/issue.net); system+=$(echo ' '); system+=$(cut -d' ' -f2 /etc/issue.net |awk -F "." '{print $1}')
+elif [[ "$(grep -c "Debian" /etc/issue.net)" = "1" ]]; then
+    system=$(cut -d' ' -f1 /etc/issue.net); system+=$(echo ' '); system+=$(cut -d' ' -f3 /etc/issue.net)
+else
+    system=$(cut -d' ' -f1 /etc/issue.net)
+fi
 
-footer() {
-    echo -e "${M} ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ${Z}"
+if [[ ! -f /etc/vps_country ]]; then
+    _country=$(wget -qO- ip-api.com/line?fields=country 2>/dev/null); [[ -z "$_country" ]] && _country="Unknown"; echo "$_country" > /etc/vps_country
+fi
+_country=$(cat /etc/vps_country); _ip_pad=$(printf '%-15s' "$IP"); _ram=$(printf ' %-9s' "$(free -h | grep -i mem | awk '{print $2}')"); _usor=$(printf '%-8s' "$(free -m | awk 'NR==2{printf "%.2f%%", $3*100/$2 }')"); _usop=$(printf '%-1s' "$(top -bn1 | awk '/Cpu/ { cpu = "" 100 - $8 "%" }; END { print cpu }')"); _core=$(printf '%-1s' "$(grep -c ^processor /proc/cpuinfo)"); _system=$(printf '%-14s' "$system"); _hora=$(printf '%(%H:%M:%S)T')
+
+# === 🎨 THE NEW ZAW-VLESS HEADER ===
+header() {
+    # တွက်ချက်မှုများ (Online, Expired, Total)
+    local _tuser=0; local _e=0; local _tdy=0; local _onlin=0
+    local today_date=$(date +"%Y-%m-%d"); local today_sec=$(date -d "$today_date" +%s)
+    local t0=$(date +"%Y/%m/%d %H:%M"); local t1=$(date -d "1 minute ago" +"%Y/%m/%d %H:%M")
+    local active_lines=$(grep -E "$t0|$t1" "$LOG_FILE" 2>/dev/null | grep "accepted")
+    
+    if [ -s "$DB" ]; then
+        _tuser=$(wc -l < "$DB")
+        while read -r user uuid exp limit; do
+            exp_sec=$(date -d "$exp" +%s 2>/dev/null)
+            if [[ "$exp" == "$today_date" ]]; then _tdy=$((_tdy + 1)); fi
+            if [[ $exp_sec -lt $today_sec ]]; then _e=$((_e + 1)); fi
+            # Online စစ်ခြင်း
+            ip_count=$(echo "$active_lines" | grep "email: $user" | wc -l)
+            if [ "$ip_count" -gt 0 ]; then _onlin=$((_onlin + 1)); fi
+        done < "$DB"
+    fi
+
+    clear
+    echo -e "           \033[38;5;226m███████████████████████████████\033[0m"
+    echo -e "           \033[38;5;40m██████████████\033[1;37m ★ \033[38;5;40m██████████████\033[0m"
+    echo -e "           \033[38;5;196m███████████████████████████████\033[0m"
+    echo -e "           \033[38;5;208m████████████\033[1;37m V 2 R \033[38;5;208m████████████\033[0m"
+    echo ""
+
+    if [[ "$_tdy" != "0" ]] || [[ "$_e" != "0" ]]; then
+        echo -e "    \033[1;33m⚠️ ယနေ့ကုန်မည်: $_tdy ယောက် \033[1;37m| \033[1;31m🔴 သက်တမ်းလွန်: $_e ယောက် \033[0m"
+        echo ""
+    fi
+
+    echo -e "\033[1;36m╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮\033[0m"
+    echo -e "\033[1;36m┃\033[0;36m \033[1;35m✦ \E[44;1;37m V2RAY SCRIPT MANAGER Edit:@Zaw-V2ray-Script \E[0m\033[1;35m✦ \033[1;36m┃\033[0m"
+    echo -e "\033[1;36m┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\033[0m"
+    echo -e "\033[1;36m┃ \033[1;33mIP     :\033[1;37m $_ip_pad   \033[1;33mServer:\033[1;37m $_country\033[0m"
+    echo -e "\033[1;36m┃ \033[1;33mOS     :\033[1;37m $_system \033[1;33mRAM:\033[1;37m $_ram \033[1;33mCPU:\033[1;37m $_core\033[0m"
+    echo -e "\033[1;36m┃ \033[1;33mHora   :\033[1;37m $_hora     \033[1;33mUso:\033[1;37m $_usor \033[1;33mUso:\033[1;37m $_usop\033[0m"
+    echo -e "\033[1;36m┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\033[0m"
+    printf "\033[1;36m┃ \033[1;32m🟢 On:\033[1;37m %-5s    \033[1;31m🔴 Exp:\033[1;37m %-5s   \033[1;34m🔵 Tot:\033[1;37m %-s\033[0m\n" "$_onlin" "$_e" "$_tuser"
+    echo -e "\033[1;36m╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯\033[0m"
+    echo ""
 }
 
 # === 📊 အကောင့်ဇယားကွက်ပြသသည့် စနစ် ===
@@ -134,19 +171,19 @@ show_account_table() {
 
 # (၁) အကောင့်သစ်ဖွင့်ခြင်း
 add_user() {
-    header
-    echo -e "${G}  [+] အကောင့်သစ်ဖန်တီးခြင်း ${Z}\n"
-    read -r -p "  ➔ အကောင့်အမည် ထည့်ပါ: " user
+    clear
+    echo -e "\E[44;1;37m         CREATE V2RAY (VLESS) ACCOUNT          \E[0m\n"
+    read -r -p "◈ Username    : " user
     user=$(echo "$user" | sed 's/[^a-zA-Z0-9]//g')
     
     if [[ -z "$user" ]]; then echo -e "${R}  ⚠️ အမည်မှားယွင်းနေပါသည်။${Z}"; pause; return; fi
     if grep -q "^$user " "$DB" 2>/dev/null; then echo -e "${R}  ⚠️ ဤအမည်ရှိပြီးသားပါ။${Z}"; pause; return; fi
     
-    read -r -p "  ➔ သက်တမ်း (ရက်) ထည့်ပါ: " days
+    read -r -p "◈ Expire Days : " days
     days=$(echo "$days" | sed 's/[^0-9]//g')
     if [[ -z "$days" ]]; then echo -e "${R}  ⚠️ ရက်အရေအတွက်မှားယွင်းနေပါသည်။${Z}"; pause; return; fi
     
-    read -r -p "  ➔ IP Limit (ဖုန်းဘယ်နှစ်လုံး သုံးခွင့်ပေးမလဲ): " limit
+    read -r -p "◈ IP Limit (ဖုန်းဘယ်နှစ်လုံးလဲ): " limit
     limit=$(echo "$limit" | sed 's/[^0-9]//g')
     [[ -z "$limit" ]] && limit=1
     
@@ -160,12 +197,17 @@ add_user() {
         
         link="vless://${uuid}@${IP}:80?type=ws&security=none&path=%2Fzawvless#${user}"
         
-        header
-        echo -e "${G}  ✅ အကောင့်အောင်မြင်စွာ ဖွင့်ပြီးပါပြီ! ${Z}\n"
-        echo -e "  ${Y}👤 အမည်     :${Z} $user   ${C}│${Z}  ${Y}📱 ဖုန်းအလုံးရေ :${Z} $limit"
-        echo -e "  ${Y}⏳ သက်တမ်း :${Z} $exp ($days ရက်)"
-        echo -e "\n  ${C}👇 Customer အား ပေးရန် Link 👇${Z}"
-        echo -e "  ${M}${link}${Z}"
+        clear
+        echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+        echo -e "\033[1;32m🚀Thu Ya Zaw🚀 V2Ray (Vless) အကောင့်ဖန်တီးပြီးပါပြီ\033[0m"
+        echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+        echo -e "\033[1;33m◈📡 Host / IP   :⪧  \033[1;37m$IP\033[0m"
+        echo -e "\033[1;33m◈🧸 Username    :⪧ \033[1;37m$user\033[0m"
+        echo -e "\033[1;33m◈📱 IP Limit    :⪧ \033[1;37m$limit Devices\033[0m"
+        echo -e "\033[1;33m◈🕰 Expire Date :⪧ \033[1;37m$exp\033[0m"
+        echo -e "\n\033[1;36m   👇 Customer အား ပေးရန် Link 👇\033[0m"
+        echo -e "\033[1;37m$link\033[0m"
+        echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     else
         echo -e "${R}  ⚠️ System Error: JSON ပြင်၍မရပါ။${Z}"
     fi
@@ -174,12 +216,12 @@ add_user() {
 
 # (၂) အကောင့်ဖျက်ခြင်း
 del_user() {
-    header
-    echo -e "${R}  [-] အကောင့်ဖျက်ရန် ${Z}\n"
+    clear
+    echo -e "\E[41;1;37m         DELETE V2RAY (VLESS) ACCOUNT          \E[0m\n"
     show_account_table || { pause; return; }
     
     echo ""
-    read -r -p "  ➔ ဖျက်လိုသော အကောင့်နံပါတ်ကို ရွေးပါ: " num
+    read -r -p "➔ ဖျက်လိုသော အကောင့်နံပါတ်ကို ရွေးပါ : " num
     num=$(echo "$num" | sed 's/[^0-9]//g')
     
     if [[ -n "$num" ]]; then
@@ -188,7 +230,7 @@ del_user() {
             jq --arg em "$user" 'del(.inbounds[0].settings.clients[] | select(.email == $em))' "$CFG" > tmp.json && mv tmp.json "$CFG"
             sed -i "${num}d" "$DB"
             systemctl restart xray
-            echo -e "\n  ${G}✅ အကောင့် ($user) အား ဖျက်ပြီးပါပြီ။${Z}"
+            echo -e "\n  ${G}✅ Account '$user' ကို အောင်မြင်စွာ ဖျက်ပစ်လိုက်ပါပြီ!${Z}"
         else
             echo -e "${R}  ⚠️ နံပါတ်မှားနေပါသည်။${Z}"
         fi
@@ -198,19 +240,19 @@ del_user() {
 
 # (၃) သက်တမ်းတိုးခြင်း
 renew_user() {
-    header
-    echo -e "${Y}  [*] သက်တမ်းတိုးခြင်း / ရက်စွဲပြင်ခြင်း ${Z}\n"
+    clear
+    echo -e "\E[42;1;37m       RENEW / EDIT V2RAY (VLESS) ACCOUNT      \E[0m\n"
     show_account_table || { pause; return; }
     
     echo ""
-    read -r -p "  ➔ နံပါတ်ကို ရွေးပါ: " num
+    read -r -p "➔ ပြင်ဆင်လိုသော နံပါတ်ရိုက်ထည့်ပါ : " num
     num=$(echo "$num" | sed 's/[^0-9]//g')
     
     if [[ -n "$num" ]]; then
         user=$(sed -n "${num}p" "$DB" | awk '{print $1}')
         if [[ -n "$user" ]]; then
-            echo -e "\n  ${C}(ဥပမာ: 30 သို့မဟုတ် 18-05-2026)${Z}"
-            read -r -p "  ➔ ရက် (သို့) ရက်စွဲ ထည့်ပါ: " input
+            echo -e "\n  ${C}[မှတ်ချက်] - ရက်ပေါင်း (ဥပမာ 30) (သို့) ရက်စွဲအတိအကျ (ဥပမာ 18-05-2026) ရိုက်ထည့်နိုင်ပါတယ်။${Z}"
+            read -r -p "➔ တိုးလိုသော ရက် (သို့) ရက်စွဲ ထည့်ပါ: " input
             input=$(echo "$input" | tr -d ' ')
             
             old_exp=$(grep "^$user " "$DB" | awk '{print $3}')
@@ -227,9 +269,9 @@ renew_user() {
             if [[ -n "$new_exp" ]]; then
                 sed -i "${num}d" "$DB"
                 echo "$user $uuid $new_exp $limit_val" >> "$DB"
-                echo -e "\n  ${G}✅ ရက်စွဲအသစ် : $new_exp${Z}"
+                echo -e "\n  ${G}✅ Account '$user' ကို ($new_exp) အထိ သက်တမ်းတိုးပြီးပါပြီ!${Z}"
             else
-                echo -e "${R}  ⚠️ ပုံစံမှားနေပါသည်။${Z}"
+                echo -e "${R}  ⚠️ ရက်စွဲ ပုံစံမှားယွင်းနေပါသည်။${Z}"
             fi
         fi
     fi
@@ -238,21 +280,20 @@ renew_user() {
 
 # (၄) စာရင်းကြည့်ခြင်း
 list_users() {
-    header
-    echo -e "  ${C}📋 VLESS အကောင့်စာရင်းများ ${Z}\n"
+    clear
+    echo -e "\E[44;1;37m                V2RAY ACCOUNT LIST             \E[0m\n"
     show_account_table
-    footer
     pause
 }
 
 # (၅) 🌐 Online Status
 online_status() {
-    header
-    echo -e "  ${G}🌐 အကောင့်များ၏ Online & IP သုံးစွဲမှု ဇယား ${Z}\n"
+    clear
+    echo -e "\E[44;1;37m             🌐 V2RAY ONLINE & IP LIMIT            \E[0m\n"
     if [ ! -s "$DB" ]; then echo -e "${R}  ⚠️ အကောင့်မရှိသေးပါ။${Z}"; pause; return; fi
 
     echo -e "  ${C}╔════╦══════════════╦═════════════════╦════════════╗${Z}"
-    echo -e "  ${C}║ ${Y}စဉ်${C} ║ ${Y}အမည်${C}         ║ ${Y}လက်ရှိအခြေအနေ${C}    ║ ${Y}IP သုံးစွဲမှု${C}  ║${Z}"
+    echo -e "  ${C}║ ${Y}စဉ်${C} ║ ${Y}အမည်${C}         ║ ${Y}အခြေအနေ${C}          ║ ${Y}IP သုံးစွဲမှု${C}  ║${Z}"
     echo -e "  ${C}╠════╬══════════════╬═════════════════╬════════════╣${Z}"
 
     t0=$(date +"%Y/%m/%d %H:%M")
@@ -285,12 +326,12 @@ online_status() {
 
 # (၆) 🚫 Ban စာရင်းကြည့်ရန်
 view_ban_log() {
-    header
-    echo -e "  ${R}🚫 ခိုးသုံး၍ အလိုအလျောက် ပိတ်ပင်ခံရသော မှတ်တမ်းများ ${Z}\n"
+    clear
+    echo -e "\E[41;1;37m           🚫 V2RAY AUTO-BAN LOGS           \E[0m\n"
     if [ -s "$BAN_LOG" ]; then
         echo -e "  ${Y}$(tail -n 20 "$BAN_LOG")${Z}"
     else
-        echo -e "  ${G}✅ လတ်တလော ခိုးသုံးသူ မရှိသေးပါ။${Z}"
+        echo -e "  ${G}✅ လတ်တလော ခိုးသုံးသူ (Overlimit) မရှိသေးပါ။${Z}"
     fi
     pause
 }
@@ -298,15 +339,18 @@ view_ban_log() {
 # Main Loop
 while true; do
     header
-    echo -e "   ${G}[1]${Z} ➕ အကောင့်သစ်ဖန်တီးရန်"
-    echo -e "   ${R}[2]${Z} ❌ အကောင့်ဖျက်ရန်"
-    echo -e "   ${Y}[3]${Z} 🔄 သက်တမ်းတိုးရန် / ပြင်ရန်"
-    echo -e "   ${C}[4]${Z} 📋 အကောင့်စာရင်းစစ်ရန်"
-    echo -e "   ${M}[5]${Z} 🌐 Online & IP Limit စစ်ဆေးရန်"
-    echo -e "   ${R}[6]${Z} 🚫 Auto-Ban မှတ်တမ်းကြည့်ရန်"
-    echo -e "   ${B}[0]${Z} 🚪 ထွက်မည်"
-    footer
-    read -r -p "  ➔ ရွေးချယ်ရန် (0-6): " opt
+    echo -e "\033[1;35m[\033[1;36m1\033[1;35m] \033[1;32m◈ \033[1;37mအကောင့်ဖန်တီးရန် (CREATE ACCOUNT)"
+    echo -e "\033[1;35m[\033[1;36m2\033[1;35m] \033[1;32m◈ \033[1;37mအကောင့်ဖျက်ရန် (DELETE ACCOUNT)"
+    echo -e "\033[1;35m[\033[1;36m3\033[1;35m] \033[1;32m◈ \033[1;37mသက်တမ်းတိုး/ပြင်ရန် (RENEW ACCOUNT)"
+    echo -e "\033[1;35m[\033[1;36m4\033[1;35m] \033[1;32m◈ \033[1;37mအကောင့်စာရင်းစစ်ရန် (LIST USERS)"
+    echo -e "\033[1;35m[\033[1;36m5\033[1;35m] \033[1;32m◈ \033[1;36m🌐 Online / Offline ဇယားကြည့်ရန်\033[0m"
+    echo -e "\033[1;35m[\033[1;36m6\033[1;35m] \033[1;32m◈ \033[1;31m🚫 Auto-Ban မှတ်တမ်းကြည့်ရန်\033[0m"
+    echo -e "\033[1;35m[\033[1;36m0\033[1;35m] \033[1;32m◈ \033[1;31mထွက်မည် (EXIT)"
+    echo ""
+    echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\033[1;32m 💬 Admin Facebook : \033[1;34mhttps://www.facebook.com/share/1CFG2UQzrD/\033[0m"
+    echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    read -r -p "➔ ရွေးချယ်ရန် နံပါတ်: " opt
     case "$opt" in
         1) add_user ;;
         2) del_user ;;
