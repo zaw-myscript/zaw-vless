@@ -1,5 +1,5 @@
 #!/bin/bash
-# ZAW-VLESS Auto Installer + AUTO-CLEAN EXPIRED USERS
+# ZAW-VLESS Auto Installer + AUTO-CLEAN EXPIRED USERS FIXED
 
 B="\e[1;34m"; G="\e[1;32m"; Y="\e[1;33m"; R="\e[1;31m"; C="\e[1;36m"; Z="\e[0m"
 
@@ -79,18 +79,19 @@ done < "$DB"
 if [ "$changed" -eq 1 ]; then
     cat "$TMP_DB" > "$DB"
     while read -r ex_user; do
-        jq --arg em "$ex_user" 'del(.inbounds[0].settings.clients[] | select(.email == $em))' "$CFG" > "$CFG.tmp" && mv "$CFG.tmp" "$CFG"
+        if jq --arg em "$ex_user" 'del(.inbounds[0].settings.clients[] | select(.email == $em))' "$CFG" > "$CFG.tmp" 2>/dev/null; then
+            if [ -s "$CFG.tmp" ]; then mv "$CFG.tmp" "$CFG"; fi
+        fi
     done < "$EXP_DB"
     systemctl restart xray
 fi
-rm -f "$TMP_DB" "$EXP_DB" 2>/dev/null
+rm -f "$TMP_DB" "$EXP_DB" "$CFG.tmp" 2>/dev/null
 EOF
 
 chmod +x /usr/local/bin/vless_cleaner
 crontab -l 2>/dev/null | grep -v "vless_cleaner" | crontab - || true
 (crontab -l 2>/dev/null; echo "1 0 * * * /usr/local/bin/vless_cleaner >/dev/null 2>&1") | crontab -
 
-# GitHub မှ vmenu ဖိုင်ကို ဆွဲယူခြင်း (Repo အသစ် zaw-vless သို့ ပြောင်းထားပါသည်)
 echo -e "${Y}📋 VLESS CLI Menu ထည့်သွင်းနေပါသည်...${Z}"
 wget -qO /usr/bin/vmenu "https://raw.githubusercontent.com/zaw-myscript/zaw-vless/main/vmenu"
 chmod +x /usr/bin/vmenu
