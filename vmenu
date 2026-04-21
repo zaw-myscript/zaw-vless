@@ -1,5 +1,5 @@
 #!/bin/bash
-# ZAW VLESS CLI MENU (PREMIUM HEADER + AUTO-BAN SYSTEM)
+# ZAW VLESS CLI MENU (PREMIUM HEADER + AUTO-BAN + AUTO-CLEAN EXPIRED)
 
 trap ' ' INT
 set +e
@@ -13,7 +13,44 @@ BAN_LOG="$LOG_DIR/limit_jail.log"
 
 IP=$(cat /etc/IP 2>/dev/null || wget -qO- ipv4.icanhazip.com 2>/dev/null)
 
-# === 1. Log စနစ် ဖွင့်ပေးခြင်း ===
+# === 🔴 1. AUTO-CLEAN (အကောင့်အလိုလိုဖျက်) စနစ် အသစ် 🔴 ===
+clean_expired_users_silent() {
+    if [ ! -s "$DB" ]; then return; fi
+    local today_date=$(date +"%Y-%m-%d")
+    local today_sec=$(date -d "$today_date" +%s)
+    local changed=0
+
+    # Temporary files
+    local TMP_DB="/tmp/vless_users.tmp"
+    local EXP_DB="/tmp/vless_exp.tmp"
+    > "$TMP_DB"; > "$EXP_DB"
+
+    while read -r user uuid exp limit; do
+        exp_sec=$(date -d "$exp" +%s 2>/dev/null)
+        if [[ -n "$exp_sec" && $exp_sec -lt $today_sec ]]; then
+            # Expired User (ဖျက်ရန်စာရင်းထဲထည့်)
+            echo "$user" >> "$EXP_DB"
+            changed=1
+        else
+            # Active User (ပြန်သိမ်းရန်စာရင်းထဲထည့်)
+            echo "$user $uuid $exp $limit" >> "$TMP_DB"
+        fi
+    done < "$DB"
+
+    if [ "$changed" -eq 1 ]; then
+        # 1. Update Database
+        cat "$TMP_DB" > "$DB"
+        # 2. Update config.json (Remove from Xray engine)
+        while read -r ex_user; do
+            jq --arg em "$ex_user" 'del(.inbounds[0].settings.clients[] | select(.email == $em))' "$CFG" > "$CFG.tmp" && mv "$CFG.tmp" "$CFG"
+        done < "$EXP_DB"
+        # 3. Restart Xray
+        systemctl restart xray
+    fi
+    rm -f "$TMP_DB" "$EXP_DB" 2>/dev/null
+}
+
+# === 2. Log စနစ် ဖွင့်ပေးခြင်း ===
 mkdir -p "$LOG_DIR"
 touch "$LOG_FILE"
 touch "$BAN_LOG"
@@ -28,7 +65,7 @@ if [ -f "$CFG" ]; then
     fi
 fi
 
-# === 2. Auto-Ban စနစ်ကို Update/Install လုပ်ခြင်း ===
+# === 3. Auto-Ban စနစ်ကို Update/Install လုပ်ခြင်း ===
 if [ ! -f "/usr/bin/vlimit" ] || grep -q "kicked" "/usr/bin/vlimit"; then
     echo -e "${Y}  [*] ⚙️ Anti-Share (Auto-Ban) စနစ် အသစ်ကို Update လုပ်နေပါသည်...${Z}"
     cat > /usr/bin/vlimit << 'EOF'
@@ -47,10 +84,8 @@ while true; do
         ip_count=$(echo "$log_data" | grep "email: $user" | awk '{print $3}' | cut -d: -f1 | sort | uniq | wc -l)
         
         if [ "$ip_count" -gt "$limit_val" ]; then
-            # ❌ ခိုးသုံးသူကို JSON နှင့် Database ထဲမှ အပြီးဖျက်ပစ်ခြင်း
             jq --arg em "$user" 'del(.inbounds[0].settings.clients[] | select(.email == $em))' "$CFG" > tmp.json && mv tmp.json "$CFG"
             sed -i "/^$user /d" "$DB"
-            
             systemctl restart xray
             echo "$(date +"%Y-%m-%d %H:%M:%S") - ❌ BANNED: $user (IPs: $ip_count / Limit: $limit_val)" >> "$BAN_LOG"
             sleep 5
@@ -83,7 +118,6 @@ pause() {
     read -r
 }
 
-# System Information Fetching (For Header)
 if [[ "$(grep -c "Ubuntu" /etc/issue.net)" = "1" ]]; then
     system=$(cut -d' ' -f1 /etc/issue.net); system+=$(echo ' '); system+=$(cut -d' ' -f2 /etc/issue.net |awk -F "." '{print $1}')
 elif [[ "$(grep -c "Debian" /etc/issue.net)" = "1" ]]; then
@@ -97,9 +131,7 @@ if [[ ! -f /etc/vps_country ]]; then
 fi
 _country=$(cat /etc/vps_country); _ip_pad=$(printf '%-15s' "$IP"); _ram=$(printf ' %-9s' "$(free -h | grep -i mem | awk '{print $2}')"); _usor=$(printf '%-8s' "$(free -m | awk 'NR==2{printf "%.2f%%", $3*100/$2 }')"); _usop=$(printf '%-1s' "$(top -bn1 | awk '/Cpu/ { cpu = "" 100 - $8 "%" }; END { print cpu }')"); _core=$(printf '%-1s' "$(grep -c ^processor /proc/cpuinfo)"); _system=$(printf '%-14s' "$system"); _hora=$(printf '%(%H:%M:%S)T')
 
-# === 🎨 THE NEW ZAW-VLESS HEADER ===
 header() {
-    # တွက်ချက်မှုများ (Online, Expired, Total)
     local _tuser=0; local _e=0; local _tdy=0; local _onlin=0
     local today_date=$(date +"%Y-%m-%d"); local today_sec=$(date -d "$today_date" +%s)
     local t0=$(date +"%Y/%m/%d %H:%M"); local t1=$(date -d "1 minute ago" +"%Y/%m/%d %H:%M")
@@ -111,7 +143,6 @@ header() {
             exp_sec=$(date -d "$exp" +%s 2>/dev/null)
             if [[ "$exp" == "$today_date" ]]; then _tdy=$((_tdy + 1)); fi
             if [[ $exp_sec -lt $today_sec ]]; then _e=$((_e + 1)); fi
-            # Online စစ်ခြင်း
             ip_count=$(echo "$active_lines" | grep "email: $user" | wc -l)
             if [ "$ip_count" -gt 0 ]; then _onlin=$((_onlin + 1)); fi
         done < "$DB"
@@ -141,7 +172,6 @@ header() {
     echo ""
 }
 
-# === 📊 အကောင့်ဇယားကွက်ပြသသည့် စနစ် ===
 show_account_table() {
     if [ ! -s "$DB" ]; then echo -e "${R}  ⚠️ အကောင့်မရှိသေးပါ။${Z}"; return 1; fi
     echo -e "  ${C}╔════╦══════════════╦══════════════╦════════════╦═══════╗${Z}"
@@ -169,7 +199,6 @@ show_account_table() {
     return 0
 }
 
-# (၁) အကောင့်သစ်ဖွင့်ခြင်း
 add_user() {
     clear
     echo -e "\E[44;1;37m         CREATE V2RAY (VLESS) ACCOUNT          \E[0m\n"
@@ -214,7 +243,6 @@ add_user() {
     pause
 }
 
-# (၂) အကောင့်ဖျက်ခြင်း
 del_user() {
     clear
     echo -e "\E[41;1;37m         DELETE V2RAY (VLESS) ACCOUNT          \E[0m\n"
@@ -238,7 +266,6 @@ del_user() {
     pause
 }
 
-# (၃) သက်တမ်းတိုးခြင်း
 renew_user() {
     clear
     echo -e "\E[42;1;37m       RENEW / EDIT V2RAY (VLESS) ACCOUNT      \E[0m\n"
@@ -278,7 +305,6 @@ renew_user() {
     pause
 }
 
-# (၄) စာရင်းကြည့်ခြင်း
 list_users() {
     clear
     echo -e "\E[44;1;37m                V2RAY ACCOUNT LIST             \E[0m\n"
@@ -286,7 +312,6 @@ list_users() {
     pause
 }
 
-# (၅) 🌐 Online Status
 online_status() {
     clear
     echo -e "\E[44;1;37m             🌐 V2RAY ONLINE & IP LIMIT            \E[0m\n"
@@ -324,7 +349,6 @@ online_status() {
     pause
 }
 
-# (၆) 🚫 Ban စာရင်းကြည့်ရန်
 view_ban_log() {
     clear
     echo -e "\E[41;1;37m           🚫 V2RAY AUTO-BAN LOGS           \E[0m\n"
@@ -336,8 +360,9 @@ view_ban_log() {
     pause
 }
 
-# Main Loop
+# Menu Main Loop (ဖွင့်တိုင်း အသံတိတ် ရှင်းလင်းမည်)
 while true; do
+    clean_expired_users_silent
     header
     echo -e "\033[1;35m[\033[1;36m1\033[1;35m] \033[1;32m◈ \033[1;37mအကောင့်ဖန်တီးရန် (CREATE ACCOUNT)"
     echo -e "\033[1;35m[\033[1;36m2\033[1;35m] \033[1;32m◈ \033[1;37mအကောင့်ဖျက်ရန် (DELETE ACCOUNT)"
