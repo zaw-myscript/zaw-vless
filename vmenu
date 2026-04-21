@@ -1,5 +1,5 @@
 #!/bin/bash
-# ZAW VLESS CLI MENU (PREMIUM HEADER + AUTO-BAN + AUTO-CLEAN EXPIRED)
+# ZAW VLESS CLI MENU (PREMIUM HEADER + AUTO-BAN + AUTO-CLEAN EXPIRED FIXED)
 
 trap ' ' INT
 set +e
@@ -13,14 +13,13 @@ BAN_LOG="$LOG_DIR/limit_jail.log"
 
 IP=$(cat /etc/IP 2>/dev/null || wget -qO- ipv4.icanhazip.com 2>/dev/null)
 
-# === 🔴 1. AUTO-CLEAN (အကောင့်အလိုလိုဖျက်) စနစ် အသစ် 🔴 ===
+# === 🔴 AUTO-CLEAN (အကောင့်အလိုလိုဖျက်) စနစ် အသစ် 🔴 ===
 clean_expired_users_silent() {
     if [ ! -s "$DB" ]; then return; fi
     local today_date=$(date +"%Y-%m-%d")
     local today_sec=$(date -d "$today_date" +%s)
     local changed=0
 
-    # Temporary files
     local TMP_DB="/tmp/vless_users.tmp"
     local EXP_DB="/tmp/vless_exp.tmp"
     > "$TMP_DB"; > "$EXP_DB"
@@ -28,46 +27,41 @@ clean_expired_users_silent() {
     while read -r user uuid exp limit; do
         exp_sec=$(date -d "$exp" +%s 2>/dev/null)
         if [[ -n "$exp_sec" && $exp_sec -lt $today_sec ]]; then
-            # Expired User (ဖျက်ရန်စာရင်းထဲထည့်)
             echo "$user" >> "$EXP_DB"
             changed=1
         else
-            # Active User (ပြန်သိမ်းရန်စာရင်းထဲထည့်)
             echo "$user $uuid $exp $limit" >> "$TMP_DB"
         fi
     done < "$DB"
 
     if [ "$changed" -eq 1 ]; then
-        # 1. Update Database
         cat "$TMP_DB" > "$DB"
-        # 2. Update config.json (Remove from Xray engine)
         while read -r ex_user; do
-            jq --arg em "$ex_user" 'del(.inbounds[0].settings.clients[] | select(.email == $em))' "$CFG" > "$CFG.tmp" && mv "$CFG.tmp" "$CFG"
+            if jq --arg em "$ex_user" 'del(.inbounds[0].settings.clients[] | select(.email == $em))' "$CFG" > "$CFG.tmp" 2>/dev/null; then
+                if [ -s "$CFG.tmp" ]; then mv "$CFG.tmp" "$CFG"; fi
+            fi
         done < "$EXP_DB"
-        # 3. Restart Xray
         systemctl restart xray
     fi
-    rm -f "$TMP_DB" "$EXP_DB" 2>/dev/null
+    rm -f "$TMP_DB" "$EXP_DB" "$CFG.tmp" 2>/dev/null
 }
 
-# === 2. Log စနစ် ဖွင့်ပေးခြင်း ===
+# === Log စနစ် ===
 mkdir -p "$LOG_DIR"
-touch "$LOG_FILE"
-touch "$BAN_LOG"
+touch "$LOG_FILE" "$BAN_LOG"
 chown -R nobody:nogroup "$LOG_DIR" 2>/dev/null || chown -R nobody:nobody "$LOG_DIR" 2>/dev/null
 chmod 644 "$LOG_FILE" "$BAN_LOG"
 
 if [ -f "$CFG" ]; then
     if ! grep -q "\"access\":" "$CFG" || grep -q "/usr/local/etc/xray/access.log" "$CFG"; then
-        jq --arg log "$LOG_FILE" '.log.access = $log' "$CFG" > tmp.json 2>/dev/null && mv tmp.json "$CFG"
-        systemctl restart xray
-        sleep 1
+        if jq --arg log "$LOG_FILE" '.log.access = $log' "$CFG" > "$CFG.tmp" 2>/dev/null; then
+            if [ -s "$CFG.tmp" ]; then mv "$CFG.tmp" "$CFG"; systemctl restart xray; sleep 1; fi
+        fi
     fi
 fi
 
-# === 3. Auto-Ban စနစ်ကို Update/Install လုပ်ခြင်း ===
+# === Auto-Ban စနစ် ===
 if [ ! -f "/usr/bin/vlimit" ] || grep -q "kicked" "/usr/bin/vlimit"; then
-    echo -e "${Y}  [*] ⚙️ Anti-Share (Auto-Ban) စနစ် အသစ်ကို Update လုပ်နေပါသည်...${Z}"
     cat > /usr/bin/vlimit << 'EOF'
 #!/bin/bash
 CFG="/usr/local/etc/xray/config.json"
@@ -84,7 +78,9 @@ while true; do
         ip_count=$(echo "$log_data" | grep "email: $user" | awk '{print $3}' | cut -d: -f1 | sort | uniq | wc -l)
         
         if [ "$ip_count" -gt "$limit_val" ]; then
-            jq --arg em "$user" 'del(.inbounds[0].settings.clients[] | select(.email == $em))' "$CFG" > tmp.json && mv tmp.json "$CFG"
+            if jq --arg em "$user" 'del(.inbounds[0].settings.clients[] | select(.email == $em))' "$CFG" > "$CFG.tmp" 2>/dev/null; then
+                if [ -s "$CFG.tmp" ]; then mv "$CFG.tmp" "$CFG"; fi
+            fi
             sed -i "/^$user /d" "$DB"
             systemctl restart xray
             echo "$(date +"%Y-%m-%d %H:%M:%S") - ❌ BANNED: $user (IPs: $ip_count / Limit: $limit_val)" >> "$BAN_LOG"
@@ -108,8 +104,6 @@ EOF
     systemctl daemon-reload
     systemctl enable --now vlimit
     systemctl restart vlimit
-    echo -e "${G}  ✅ Auto-Ban စနစ် အောင်မြင်စွာ အသက်ဝင်သွားပါပြီ!${Z}"
-    sleep 2
 fi
 
 pause() {
@@ -142,7 +136,7 @@ header() {
         while read -r user uuid exp limit; do
             exp_sec=$(date -d "$exp" +%s 2>/dev/null)
             if [[ "$exp" == "$today_date" ]]; then _tdy=$((_tdy + 1)); fi
-            if [[ $exp_sec -lt $today_sec ]]; then _e=$((_e + 1)); fi
+            if [[ -n "$exp_sec" && $exp_sec -lt $today_sec ]]; then _e=$((_e + 1)); fi
             ip_count=$(echo "$active_lines" | grep "email: $user" | wc -l)
             if [ "$ip_count" -gt 0 ]; then _onlin=$((_onlin + 1)); fi
         done < "$DB"
@@ -188,7 +182,7 @@ show_account_table() {
         
         if [[ "$exp" == "$today_date" ]]; then
             printf "  ${C}║${Z} ${Y}%-2s${Z} ${C}║${Z} ${Y}%-12s${Z} ${C}║${Z} ${Y}%-12s${Z} ${C}║${Z} ${Y}⚠️ Today  ${C}║${Z} ${Y}%-5s${Z} ${C}║\n" "$i" "$user" "$exp" "$limit_val"
-        elif [[ $exp_sec -lt $today_sec ]]; then
+        elif [[ -n "$exp_sec" && $exp_sec -lt $today_sec ]]; then
             printf "  ${C}║${Z} ${R}%-2s${Z} ${C}║${Z} ${R}%-12s${Z} ${C}║${Z} ${R}%-12s${Z} ${C}║${Z} ${R}❌ Expired${C}║${Z} ${R}%-5s${Z} ${C}║\n" "$i" "$user" "$exp" "$limit_val"
         else
             printf "  ${C}║${Z} %-2s ${C}║${Z} %-12s ${C}║${Z} %-12s ${C}║${Z} ${G}✅ Active ${C}║${Z} %-5s ${C}║\n" "$i" "$user" "$exp" "$limit_val"
@@ -219,26 +213,32 @@ add_user() {
     exp=$(date -d "+$days days" +"%Y-%m-%d" 2>/dev/null)
     uuid=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen)
     
-    if jq --arg id "$uuid" --arg em "$user" '.inbounds[0].settings.clients += [{"id": $id, "email": $em}]' "$CFG" > tmp.json 2>/dev/null; then
-        mv tmp.json "$CFG"
-        echo "$user $uuid $exp $limit" >> "$DB"
-        systemctl restart xray
-        
-        link="vless://${uuid}@${IP}:80?type=ws&security=none&path=%2Fzawvless#${user}"
-        
-        clear
-        echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-        echo -e "\033[1;32m🚀Thu Ya Zaw🚀 V2Ray (Vless) အကောင့်ဖန်တီးပြီးပါပြီ\033[0m"
-        echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-        echo -e "\033[1;33m◈📡 Host / IP   :⪧  \033[1;37m$IP\033[0m"
-        echo -e "\033[1;33m◈🧸 Username    :⪧ \033[1;37m$user\033[0m"
-        echo -e "\033[1;33m◈📱 IP Limit    :⪧ \033[1;37m$limit Devices\033[0m"
-        echo -e "\033[1;33m◈🕰 Expire Date :⪧ \033[1;37m$exp\033[0m"
-        echo -e "\n\033[1;36m   👇 Customer အား ပေးရန် Link 👇\033[0m"
-        echo -e "\033[1;37m$link\033[0m"
-        echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    # 🔴 FIX: Using Absolute Path + Size Check for JSON update 🔴
+    if jq --arg id "$uuid" --arg em "$user" '.inbounds[0].settings.clients += [{"id": $id, "email": $em}]' "$CFG" > "$CFG.tmp" 2>/dev/null; then
+        if [ -s "$CFG.tmp" ]; then
+            mv "$CFG.tmp" "$CFG"
+            echo "$user $uuid $exp $limit" >> "$DB"
+            systemctl restart xray
+            
+            link="vless://${uuid}@${IP}:80?type=ws&security=none&path=%2Fzawvless#${user}"
+            
+            clear
+            echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+            echo -e "\033[1;32m🚀Thu Ya Zaw🚀 V2Ray (Vless) အကောင့်ဖန်တီးပြီးပါပြီ\033[0m"
+            echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+            echo -e "\033[1;33m◈📡 Host / IP   :⪧  \033[1;37m$IP\033[0m"
+            echo -e "\033[1;33m◈🧸 Username    :⪧ \033[1;37m$user\033[0m"
+            echo -e "\033[1;33m◈📱 IP Limit    :⪧ \033[1;37m$limit Devices\033[0m"
+            echo -e "\033[1;33m◈🕰 Expire Date :⪧ \033[1;37m$exp\033[0m"
+            echo -e "\n\033[1;36m   👇 Customer အား ပေးရန် Link 👇\033[0m"
+            echo -e "\033[1;37m$link\033[0m"
+            echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+        else
+            echo -e "${R}  ⚠️ System Error: Config Update လုပ်ရာတွင် ဖိုင်ချို့ယွင်းသွားပါသည်။${Z}"
+            rm -f "$CFG.tmp"
+        fi
     else
-        echo -e "${R}  ⚠️ System Error: JSON ပြင်၍မရပါ။${Z}"
+        echo -e "${R}  ⚠️ System Error: JSON ပြင်၍မရပါ။ (jq command failed)${Z}"
     fi
     pause
 }
@@ -255,10 +255,14 @@ del_user() {
     if [[ -n "$num" ]]; then
         user=$(sed -n "${num}p" "$DB" | awk '{print $1}')
         if [[ -n "$user" ]]; then
-            jq --arg em "$user" 'del(.inbounds[0].settings.clients[] | select(.email == $em))' "$CFG" > tmp.json && mv tmp.json "$CFG"
-            sed -i "${num}d" "$DB"
-            systemctl restart xray
-            echo -e "\n  ${G}✅ Account '$user' ကို အောင်မြင်စွာ ဖျက်ပစ်လိုက်ပါပြီ!${Z}"
+            if jq --arg em "$user" 'del(.inbounds[0].settings.clients[] | select(.email == $em))' "$CFG" > "$CFG.tmp" 2>/dev/null; then
+                if [ -s "$CFG.tmp" ]; then
+                    mv "$CFG.tmp" "$CFG"
+                    sed -i "${num}d" "$DB"
+                    systemctl restart xray
+                    echo -e "\n  ${G}✅ Account '$user' ကို အောင်မြင်စွာ ဖျက်ပစ်လိုက်ပါပြီ!${Z}"
+                fi
+            fi
         else
             echo -e "${R}  ⚠️ နံပါတ်မှားနေပါသည်။${Z}"
         fi
@@ -360,7 +364,6 @@ view_ban_log() {
     pause
 }
 
-# Menu Main Loop (ဖွင့်တိုင်း အသံတိတ် ရှင်းလင်းမည်)
 while true; do
     clean_expired_users_silent
     header
