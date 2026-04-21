@@ -1,5 +1,5 @@
 #!/bin/bash
-# ZAW-VLESS Auto Installer
+# ZAW-VLESS Auto Installer + AUTO-CLEAN EXPIRED USERS
 
 B="\e[1;34m"; G="\e[1;32m"; Y="\e[1;33m"; R="\e[1;31m"; C="\e[1;36m"; Z="\e[0m"
 
@@ -49,6 +49,47 @@ cat > $CFG <<EOF
 }
 EOF
 
+# === 🔴 AUTO-CLEAN (ည ၁၂ နာရီတိုင်း အလိုလို အကောင့်ဖျက်မည့် စနစ်) ထည့်သွင်းခြင်း 🔴 ===
+echo -e "${Y}🧹 Auto-Delete (သက်တမ်းလွန် VLESS အကောင့်ဖျက်စနစ်) ထည့်သွင်းနေပါသည်...${Z}"
+cat > /usr/local/bin/vless_cleaner << 'EOF'
+#!/bin/bash
+CFG="/usr/local/etc/xray/config.json"
+DB="/usr/local/etc/xray/users.txt"
+
+if [ ! -s "$DB" ]; then exit 0; fi
+
+today_date=$(date +"%Y-%m-%d")
+today_sec=$(date -d "$today_date" +%s)
+changed=0
+
+TMP_DB="/tmp/vless_users_cron.tmp"
+EXP_DB="/tmp/vless_exp_cron.tmp"
+> "$TMP_DB"; > "$EXP_DB"
+
+while read -r user uuid exp limit; do
+    exp_sec=$(date -d "$exp" +%s 2>/dev/null)
+    if [[ -n "$exp_sec" && $exp_sec -lt $today_sec ]]; then
+        echo "$user" >> "$EXP_DB"
+        changed=1
+    else
+        echo "$user $uuid $exp $limit" >> "$TMP_DB"
+    fi
+done < "$DB"
+
+if [ "$changed" -eq 1 ]; then
+    cat "$TMP_DB" > "$DB"
+    while read -r ex_user; do
+        jq --arg em "$ex_user" 'del(.inbounds[0].settings.clients[] | select(.email == $em))' "$CFG" > "$CFG.tmp" && mv "$CFG.tmp" "$CFG"
+    done < "$EXP_DB"
+    systemctl restart xray
+fi
+rm -f "$TMP_DB" "$EXP_DB" 2>/dev/null
+EOF
+
+chmod +x /usr/local/bin/vless_cleaner
+crontab -l 2>/dev/null | grep -v "vless_cleaner" | crontab - || true
+(crontab -l 2>/dev/null; echo "1 0 * * * /usr/local/bin/vless_cleaner >/dev/null 2>&1") | crontab -
+
 # GitHub မှ vmenu ဖိုင်ကို ဆွဲယူခြင်း (Repo အသစ် zaw-vless သို့ ပြောင်းထားပါသည်)
 echo -e "${Y}📋 VLESS CLI Menu ထည့်သွင်းနေပါသည်...${Z}"
 wget -qO /usr/bin/vmenu "https://raw.githubusercontent.com/zaw-myscript/zaw-vless/main/vmenu"
@@ -60,5 +101,5 @@ systemctl restart xray
 
 ufw allow 80/tcp >/dev/null 2>&1 || true
 
-echo -e "\n${G}✅ VLESS (WebSocket) Server နှင့် Menu တပ်ဆင်ပြီးပါပြီ!${Z}"
+echo -e "\n${G}✅ VLESS (WebSocket) Server, Menu နှင့် Auto-Clean စနစ် တပ်ဆင်ပြီးပါပြီ!${Z}"
 echo -e "${C}အကောင့်စီမံရန် Terminal တွင်${Z} ${Y}vmenu${Z} ${C}ဟု ရိုက်ထည့်ပါ။${Z}"
