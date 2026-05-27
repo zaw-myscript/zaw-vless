@@ -1,5 +1,5 @@
 #!/bin/bash
-# ZAW-VLESS Auto Installer + AUTO-CLEAN EXPIRED + DATA QUOTA WEB DASHBOARD
+# ZAW-VLESS Auto Installer + AUTO-CLEAN + DATA QUOTA WEB DASHBOARD
 
 B="\e[1;34m"; G="\e[1;32m"; Y="\e[1;33m"; R="\e[1;31m"; C="\e[1;36m"; Z="\e[0m"
 
@@ -19,7 +19,7 @@ CFG="/usr/local/etc/xray/config.json"
 DB="/usr/local/etc/xray/users.txt"
 touch $DB
 
-# Data Quota အတွက် Xray API, Stats နှင့် Policy များကိုပါ ထည့်သွင်းထားသော Config အသစ်
+# Xray Config (Web Data Tracker ပါဝင်သည်)
 cat > $CFG <<EOF
 {
   "log": {
@@ -79,8 +79,8 @@ cat > $CFG <<EOF
 }
 EOF
 
-# === 🔴 AUTO-CLEAN (ည ၁၂ နာရီတိုင်း အလိုလို အကောင့်ဖျက်မည့် စနစ်) 🔴 ===
-echo -e "${Y}🧹 Auto-Delete (သက်တမ်းလွန် VLESS အကောင့်ဖျက်စနစ်) ထည့်သွင်းနေပါသည်...${Z}"
+# === AUTO-CLEAN SYSTEM ===
+echo -e "${Y}🧹 Auto-Delete (သက်တမ်းလွန် အကောင့်ဖျက်စနစ်) ထည့်သွင်းနေပါသည်...${Z}"
 cat > /usr/local/bin/vless_cleaner << 'EOF'
 #!/bin/bash
 CFG="/usr/local/etc/xray/config.json"
@@ -122,15 +122,16 @@ chmod +x /usr/local/bin/vless_cleaner
 crontab -l 2>/dev/null | grep -v "vless_cleaner" | crontab - || true
 (crontab -l 2>/dev/null; echo "1 0 * * * /usr/local/bin/vless_cleaner >/dev/null 2>&1") | crontab -
 
-# === 📊 DATA QUOTA & WEB DASHBOARD SYSTEM (PYTHON) 📊 ===
+# === WEB DASHBOARD SYSTEM (PYTHON) ===
 echo -e "${Y}🌐 Data Tracking & Website Dashboard တပ်ဆင်နေပါသည်...${Z}"
 cat > /usr/local/bin/vweb_quota.py << 'EOF'
-import os, json, subprocess, threading, time
+import os, json, subprocess, threading, time, datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 DB_FILE = "/usr/local/etc/xray/users.txt"
 USAGE_FILE = "/usr/local/etc/xray/usage.json"
 CFG_FILE = "/usr/local/etc/xray/config.json"
+LOG_FILE = "/var/log/xray/access.log"
 
 def load_usage():
     if os.path.exists(USAGE_FILE):
@@ -151,6 +152,22 @@ def get_users():
                 if len(parts) >= 5: users[parts[0]] = parts[4]
                 elif len(parts) == 4: users[parts[0]] = "Unlimited"
     return users
+
+def get_online_users():
+    online = set()
+    now = datetime.datetime.now()
+    min1 = now - datetime.timedelta(minutes=1)
+    t0 = now.strftime("%Y/%m/%d %H:%M")
+    t1 = min1.strftime("%Y/%m/%d %H:%M")
+    try:
+        cmd = f"grep -E '{t0}|{t1}' {LOG_FILE} | grep 'accepted'"
+        out = subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL).decode('utf-8')
+        for line in out.strip().split('\n'):
+            if "email: " in line:
+                email = line.split("email: ")[1].split()[0]
+                online.add(email)
+    except: pass
+    return online
 
 def update_stats():
     while True:
@@ -177,7 +194,6 @@ def update_stats():
                             try:
                                 limit_bytes = float(gb) * 1024 * 1024 * 1024
                                 if usage_db[u] > limit_bytes:
-                                    # Data ပြည့်သွားပါက အကောင့်ကို ဖျက်ပစ်မည်
                                     subprocess.run(f"sed -i '/^{u} /d' {DB_FILE}", shell=True)
                                     subprocess.run(f"jq --arg em '{u}' 'del(.inbounds[0].settings.clients[] | select(.email == $em))' {CFG_FILE} > {CFG_FILE}.tmp", shell=True)
                                     os.rename(f"{CFG_FILE}.tmp", CFG_FILE)
@@ -188,21 +204,97 @@ def update_stats():
 
 class ReqHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        path = self.path
+        user_filter = None
+        
+        if path.startswith("/user/"):
+            user_filter = path.split("/user/")[1].strip()
+        elif path != "/" and path != "/admin":
+            self.send_response(404)
+            self.end_headers()
+            return
+            
         self.send_response(200)
         self.send_header('Content-type', 'text/html; charset=utf-8')
         self.end_headers()
+        
         usage_db = load_usage()
         users = get_users()
-        html = "<html><head><title>ZAW VPN - Data Usage</title><meta name='viewport' content='width=device-width, initial-scale=1'><meta http-equiv='refresh' content='60'><style>body{font-family:Arial;background:#f4f4f9;text-align:center;padding:20px;}table{width:100%;max-width:600px;margin:auto;border-collapse:collapse;background:#fff;box-shadow:0 0 10px rgba(0,0,0,0.1);}th,td{padding:12px;border:1px solid #ddd;}th{background:#007BFF;color:white;}tr:nth-child(even){background:#f2f2f2;}.warning{color:red;font-weight:bold;}</style></head><body><h2>📊 V2Ray Data Usage Dashboard</h2><table><tr><th>👤 Username</th><th>💾 Used Data</th><th>🎯 Data Limit</th></tr>"
+        online_users = get_online_users()
+        
+        html = f"""
+        <html><head>
+        <title>ZAW VPN - Data Usage</title>
+        <meta name='viewport' content='width=device-width, initial-scale=1'>
+        <meta http-equiv='refresh' content='60'>
+        <style>
+            body{{font-family:Arial,sans-serif;background:#f4f4f9;text-align:center;padding:10px;}}
+            .card{{max-width:600px;margin:auto;background:#fff;padding:20px;border-radius:10px;box-shadow:0 4px 8px rgba(0,0,0,0.1);}}
+            h2{{color:#333;}}
+            .user-box{{border:1px solid #ddd;border-radius:8px;padding:15px;margin-bottom:15px;text-align:left;background:#fafafa;}}
+            .u-name{{font-size:18px;font-weight:bold;color:#007BFF;}}
+            .status-on{{color:green;font-weight:bold;font-size:14px;float:right;}}
+            .status-off{{color:gray;font-weight:bold;font-size:14px;float:right;}}
+            .data-info{{margin:10px 0;font-size:15px;color:#555;}}
+            .progress-container{{width:100%;background:#e0e0e0;border-radius:5px;overflow:hidden;height:22px;position:relative;}}
+            .progress-bar{{height:100%;text-align:center;color:white;font-weight:bold;line-height:22px;font-size:13px;transition:width 0.5s;}}
+            .bar-green{{background:#28a745;}}
+            .bar-yellow{{background:#ffc107;color:black;}}
+            .bar-red{{background:#dc3545;}}
+            .bar-unlimited{{background:#17a2b8;}}
+            .contact-btn{{display:inline-block;margin-top:20px;padding:10px 20px;background:#007BFF;color:white;text-decoration:none;border-radius:5px;font-weight:bold;}}
+            .contact-btn:hover{{background:#0056b3;}}
+        </style>
+        </head><body><div class='card'><h2>📊 VPN Data Dashboard</h2>
+        """
+        
+        count = 0
         for u, gb in users.items():
+            if user_filter and u != user_filter:
+                continue
+                
+            count += 1
             used = usage_db.get(u, 0)
             used_mb = used / (1024 * 1024)
-            used_str = f"{used_mb/1024:.2f} GB" if used_mb > 1024 else f"{used_mb:.2f} MB"
-            limit_str = f"{gb} GB" if gb != "Unlimited" else "Unlimited"
-            if gb != "Unlimited" and (used / (1024*1024*1024)) >= float(gb) * 0.9:
-                used_str = f"<span class='warning'>{used_str}</span>"
-            html += f"<tr><td>{u}</td><td>{used_str}</td><td>{limit_str}</td></tr>"
-        html += "</table><br><p>ZAW Script Manager</p></body></html>"
+            
+            status_html = "<span class='status-on'>🟢 Online</span>" if u in online_users else "<span class='status-off'>🔴 Offline</span>"
+            
+            if gb == "Unlimited":
+                pct = 0
+                bar_class = "bar-unlimited"
+                bar_text = "Unlimited Data"
+                width = "100%"
+                limit_str = "Unlimited"
+                used_str = f"{used_mb/1024:.2f} GB" if used_mb > 1024 else f"{used_mb:.2f} MB"
+            else:
+                limit_mb = float(gb) * 1024
+                pct = (used_mb / limit_mb) * 100
+                if pct <= 50: bar_class = "bar-green"
+                elif pct <= 80: bar_class = "bar-yellow"
+                else: bar_class = "bar-red"
+                
+                width = f"{min(pct, 100)}%"
+                bar_text = f"{pct:.1f}%"
+                limit_str = f"{gb} GB"
+                used_str = f"{used_mb/1024:.2f} GB" if used_mb > 1024 else f"{used_mb:.2f} MB"
+
+            html += f"""
+            <div class='user-box'>
+                <div><span class='u-name'>👤 {u}</span> {status_html}</div>
+                <div class='data-info'>💾 သုံးထားသည်: <b>{used_str}</b> / 🎯 ခွင့်ပြုချက်: <b>{limit_str}</b></div>
+                <div class='progress-container'>
+                    <div class='progress-bar {bar_class}' style='width:{width}'>{bar_text}</div>
+                </div>
+            </div>
+            """
+            
+        if count == 0:
+            html += "<p style='color:red;'>⚠️ အချက်အလက် မတွေ့ရှိပါ။ / User Not Found.</p>"
+            
+        html += """
+        <a href='https://www.facebook.com/share/1CFG2UQzrD/' target='_blank' class='contact-btn'>💬 Admin သို့ ဆက်သွယ်ရန်</a>
+        </div></body></html>
+        """
         self.wfile.write(html.encode('utf-8'))
 
 if __name__ == '__main__':
@@ -225,6 +317,7 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
+# === MENU SCRIPT ဒေါင်းလုဒ်ဆွဲခြင်း (Bro ရဲ့ Github Link ကို အောက်မှာ ထည့်ထားပါတယ်) ===
 echo -e "${Y}📋 VLESS CLI Menu ထည့်သွင်းနေပါသည်...${Z}"
 wget -qO /usr/bin/vmenu "https://raw.githubusercontent.com/zaw-myscript/zaw-vless/main/vmenu"
 chmod +x /usr/bin/vmenu
@@ -238,6 +331,5 @@ systemctl restart vweb
 ufw allow 80/tcp >/dev/null 2>&1 || true
 ufw allow 8181/tcp >/dev/null 2>&1 || true
 
-echo -e "\n${G}✅ VLESS (WebSocket) Server, Menu, Data Web Dashboard နှင့် Auto-Clean စနစ် တပ်ဆင်ပြီးပါပြီ!${Z}"
-echo -e "${C}အကောင့်စီမံရန် Terminal တွင်${Z} ${Y}vmenu${Z} ${C}ဟု ရိုက်ထည့်ပါ။${Z}"
-echo -e "${C}ဝယ်ယူသူများ Data စစ်ဆေးရန် Link: http://$(cat /etc/IP 2>/dev/null || curl -s ipv4.icanhazip.com):8181${Z}"
+echo -e "\n${G}✅ VLESS (WebSocket) Server, Menu နှင့် Web Dashboard တပ်ဆင်ပြီးပါပြီ!${Z}"
+echo -e "${C}Terminal တွင်${Z} ${Y}vmenu${Z} ${C}ဟု ရိုက်ထည့်ပါ။${Z}"
