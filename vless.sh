@@ -19,13 +19,14 @@ CFG="/usr/local/etc/xray/config.json"
 DB="/usr/local/etc/xray/users.txt"
 touch $DB
 
-# Data Quota အတွက် Xray API နှင့် Policy များကိုပါ ထည့်သွင်းထားသော Config အသစ်
+# Data Quota အတွက် Xray API, Stats နှင့် Policy များကိုပါ ထည့်သွင်းထားသော Config အသစ်
 cat > $CFG <<EOF
 {
   "log": {
     "loglevel": "warning",
     "access": "/var/log/xray/access.log"
   },
+  "stats": {},
   "api": {
     "services": ["StatsService"],
     "tag": "api"
