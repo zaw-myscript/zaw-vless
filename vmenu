@@ -1,5 +1,5 @@
 #!/bin/bash
-# ZAW VLESS CLI MENU (PREMIUM HEADER + AUTO-BAN + AUTO-CLEAN + GB LIMIT QUOTA)
+# ZAW VLESS CLI MENU (PREMIUM HEADER + AUTO-BAN + AUTO-CLEAN + GB LIMIT QUOTA FIXED)
 
 trap ' ' INT
 set +e
@@ -212,7 +212,7 @@ add_user() {
     read -r -p "◈ IP Limit (ဖုန်းဘယ်နှစ်လုံးလဲ): " limit
     limit=$(echo "$limit" | sed 's/[^0-9]//g')
     [[ -z "$limit" ]] && limit=1
-    
+
     read -r -p "◈ Data Limit (GB) (အကန့်အသတ်မရှိပေးလိုပါက 0 ထည့်ပါ): " gb
     gb=$(echo "$gb" | sed 's/[^0-9]//g')
     [[ -z "$gb" || "$gb" == "0" ]] && gb="Unlimited"
@@ -299,11 +299,12 @@ renew_user() {
             read -r -p "➔ တိုးလိုသော ရက် (သို့) ရက်စွဲ ထည့်ပါ: " input
             input=$(echo "$input" | tr -d ' ')
             
-            old_exp=$(grep "^$user " "$DB" | awk '{print $3}')
-            uuid=$(grep "^$user " "$DB" | awk '{print $2}')
-            limit=$(grep "^$user " "$DB" | awk '{print $4}')
-            limit_val=${limit:-1}
-            gb_val=$(grep "^$user " "$DB" | awk '{print $5}')
+            old_line=$(grep "^$user " "$DB")
+            old_exp=$(echo "$old_line" | awk '{print $3}')
+            uuid=$(echo "$old_line" | awk '{print $2}')
+            limit_val=$(echo "$old_line" | awk '{print $4}')
+            limit_val=${limit_val:-1}
+            gb_val=$(echo "$old_line" | awk '{print $5}')
             gb_val=${gb_val:-Unlimited}
             
             if [[ "$input" =~ ^[0-9]{1,2}-[0-9]{1,2}-[0-9]{4}$ ]]; then
